@@ -1,0 +1,11 @@
+[package]
+name = "actsync"
+version = "0.1.0"
+edition = "2021"
+authors = ["Baptiste Grosjean <grosjeanbaptiste@outlook.com>"]
+
+[lib]
+name = "actsync"
+path = "src/lib.rs"
+
+[dependencies]

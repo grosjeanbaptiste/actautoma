@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Direnv / local env
+.envrc.local
+.env.local
+
+# Claude Code transcripts (per-project)
+.claude/transcripts/
+
+# Build output (Rust: cargo; also Maven)
+target/
