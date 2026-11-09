@@ -2,7 +2,7 @@
 name = "actsync"
 version = "0.1.0"
 edition = "2021"
-authors = ["Baptiste Grosjean <grosjeanbaptiste@outlook.com>"]
+authors = ["Baptiste Grosjean <baptiste@acteble.com>"]
 
 [lib]
 name = "actsync"
