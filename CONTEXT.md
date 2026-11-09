@@ -1,4 +1,4 @@
-# actsync — state as of <YYYY-MM-DD>
+# actautoma — state as of <YYYY-MM-DD>
 
 The verified, current state of this project. Every session reads this file
 first and updates it after any act that changes the state (a send, a merge,

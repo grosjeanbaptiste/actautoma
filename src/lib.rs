@@ -1,4 +1,4 @@
-//! actsync — TODO: describe the crate.
+//! actautoma — TODO: describe the crate.
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

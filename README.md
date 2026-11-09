@@ -1,4 +1,4 @@
-# actsync
+# actautoma
 
 <one-line description>
 

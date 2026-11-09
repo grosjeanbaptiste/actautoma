@@ -1,4 +1,4 @@
-# actsync
+# actautoma
 
 Project-level instructions for Claude Code. Loaded on top of the user-wide
 `~/.claude/CLAUDE.md` in any session opened inside this repo.
