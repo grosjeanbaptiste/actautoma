@@ -1,11 +1,11 @@
 [package]
-name = "actsync"
+name = "actautoma"
 version = "0.1.0"
 edition = "2021"
 authors = ["Baptiste Grosjean <baptiste@acteble.com>"]
 
 [lib]
-name = "actsync"
+name = "actautoma"
 path = "src/lib.rs"
 
 [dependencies]
