@@ -1,7 +1,8 @@
 //! The `gh` (GitHub) adapter of [`Forge`].
 
 use crate::forge::{
-    parse_repo, Error, Forge, Mergeable, NewPullRequest, NewRepo, PullRequest, Repo, Runner,
+    parse_repo, Error, Forge, Mergeable, NewPullRequest, NewRepo, PullRequest, Repo, RepoSearch,
+    Runner,
 };
 use std::path::{Path, PathBuf};
 
@@ -126,6 +127,36 @@ impl<R: Runner> Forge for Gh<R> {
 
     fn available(&self) -> Result<(), Error> {
         self.gh(&["--version"]).map(drop)
+    }
+
+    fn user(&self) -> Result<String, Error> {
+        let raw = self.gh(&["api", "user", "-q", ".login"])?;
+        match raw.trim() {
+            "" => Err(Error::Parse(raw)),
+            login => Ok(login.to_string()),
+        }
+    }
+
+    fn repo_exists(&self, owner: &str, name: &str) -> Result<bool, Error> {
+        match self.gh(&["api", &format!("repos/{owner}/{name}")]) {
+            Ok(_) => Ok(true),
+            Err(Error::Run(m)) if m.contains("Not Found") => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn search_repos(&self, text: &str) -> Result<RepoSearch, Error> {
+        let query = format!("search/repositories?q={text}+in:name&per_page=100");
+        let raw = self.gh(&["api", &query, "-q", ".total_count, .items[].full_name"])?;
+        let mut lines = raw.lines();
+        let total = lines.next().and_then(|l| l.trim().parse().ok());
+        let Some(total) = total else {
+            return Err(Error::Parse(raw));
+        };
+        Ok(RepoSearch {
+            total,
+            names: lines.map(String::from).collect(),
+        })
     }
 }
 
@@ -375,5 +406,64 @@ mod tests {
         );
         assert_eq!(gh.create_repo(&new), Err(Error::Run("boom".into())));
         assert_eq!(gh.available(), Err(Error::Run("boom".into())));
+    }
+
+    #[test]
+    fn user_asks_the_api_for_the_login() {
+        let f = Fake::answering(vec![Ok("me\n".into())]);
+        assert_eq!(Gh::new(&f).user().unwrap(), "me");
+        assert_eq!(f.call(0).1, ["api", "user", "-q", ".login"]);
+    }
+
+    #[test]
+    fn an_empty_login_is_a_parse_error() {
+        let f = Fake::answering(vec![Ok("\n".into())]);
+        assert_eq!(Gh::new(&f).user(), Err(Error::Parse("\n".into())));
+    }
+
+    #[test]
+    fn repo_exists_is_true_when_the_api_answers() {
+        let f = Fake::answering(vec![Ok("{}".into())]);
+        assert!(Gh::new(&f).repo_exists("me", "ss").unwrap());
+        assert_eq!(f.call(0).1, ["api", "repos/me/ss"]);
+    }
+
+    #[test]
+    fn repo_exists_is_false_on_not_found_and_an_error_on_anything_else() {
+        let f = Fake::answering(vec![Err(Error::Run("gh: Not Found (HTTP 404)".into()))]);
+        assert!(!Gh::new(&f).repo_exists("me", "ss").unwrap());
+        let f = Fake::answering(vec![Err(Error::Run("HTTP 403: rate limit".into()))]);
+        assert_eq!(
+            Gh::new(&f).repo_exists("me", "ss"),
+            Err(Error::Run("HTTP 403: rate limit".into()))
+        );
+    }
+
+    #[test]
+    fn search_repos_reads_the_total_then_the_full_names() {
+        let f = Fake::answering(vec![Ok("250\nbob/acte\nann/acte-x\n".into())]);
+        let found = Gh::new(&f).search_repos("acte").unwrap();
+        assert_eq!(
+            found,
+            RepoSearch {
+                total: 250,
+                names: vec!["bob/acte".into(), "ann/acte-x".into()]
+            }
+        );
+        let args = f.call(0).1;
+        assert_eq!(
+            args[..2],
+            ["api", "search/repositories?q=acte+in:name&per_page=100"]
+        );
+        assert_eq!(args[2], "-q");
+    }
+
+    #[test]
+    fn search_repos_without_a_numeric_total_is_a_parse_error() {
+        let f = Fake::answering(vec![Ok("many\nbob/acte\n".into())]);
+        assert_eq!(
+            Gh::new(&f).search_repos("acte"),
+            Err(Error::Parse("many\nbob/acte\n".into()))
+        );
     }
 }

@@ -19,6 +19,9 @@ impl Fake {
             answers: RefCell::new(answers),
         }
     }
+    pub fn calls_len(&self) -> usize {
+        self.calls.borrow().len()
+    }
     pub fn call(&self, i: usize) -> Call {
         self.calls.borrow()[i].clone()
     }

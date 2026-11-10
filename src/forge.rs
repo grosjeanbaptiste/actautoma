@@ -10,6 +10,8 @@ pub enum Error {
     Run(String),
     /// The platform tool answered something this adapter does not understand.
     Parse(String),
+    /// This adapter does not implement the operation: nothing was run.
+    Unsupported(String),
 }
 
 impl fmt::Display for Error {
@@ -17,6 +19,7 @@ impl fmt::Display for Error {
         match self {
             Error::Run(m) => write!(f, "{m}"),
             Error::Parse(m) => write!(f, "unexpected answer: {m}"),
+            Error::Unsupported(m) => write!(f, "not supported: {m}"),
         }
     }
 }
@@ -89,6 +92,15 @@ pub struct NewRepo {
     pub push: bool,
 }
 
+/// What a search of repository names found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoSearch {
+    /// The platform's own count of matches, which may exceed `names`.
+    pub total: u64,
+    /// `owner/name` of the best matches, as many as the platform returned (first page).
+    pub names: Vec<String>,
+}
+
 /// A repository-hosting platform. One adapter per platform tool (`gh`, `glab`, ...).
 pub trait Forge {
     /// The pull request of the current branch, or number `number`.
@@ -104,6 +116,19 @@ pub trait Forge {
     fn create_repo(&self, repo: &NewRepo) -> Result<(), Error>;
     /// Fails unless the platform tool is installed: lets a caller refuse before changing anything.
     fn available(&self) -> Result<(), Error>;
+
+    /// The login of the authenticated user.
+    fn user(&self) -> Result<String, Error> {
+        Err(Error::Unsupported("user".into()))
+    }
+    /// Whether repository `owner/name` exists; a platform error is not `false`.
+    fn repo_exists(&self, _owner: &str, _name: &str) -> Result<bool, Error> {
+        Err(Error::Unsupported("repo_exists".into()))
+    }
+    /// Repositories, under any owner, whose name matches `text` (first page, best first).
+    fn search_repos(&self, _text: &str) -> Result<RepoSearch, Error> {
+        Err(Error::Unsupported("search_repos".into()))
+    }
 }
 
 /// Parses `"<slug> <default branch>"`, the answer both adapters ask their tool for.

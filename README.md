@@ -42,20 +42,26 @@ if pr.mergeable == actautoma::forge::Mergeable::Mergeable {
 
 - `Forge` (in `forge`) is the port: pull requests (`view_pr`, `create_pr`, `merge_pr`),
   repositories (`view_repo`, `set_default_branch`, `create_repo`) and `available`, which
-  fails when the platform tool is missing. One adapter per
+  fails when the platform tool is missing. Name lookups: `user` (the authenticated login),
+  `repo_exists(owner, name)` (a platform error is never `false`) and `search_repos(text)`
+  (`RepoSearch { total, names }`, first page). They default to `Error::Unsupported`. One adapter per
   platform tool: `Gh` (GitHub, `gh`) and `Glab` (GitLab, `glab`; a pull request is a merge
   request). Others plug in by implementing the trait. `Glab::new(ProcessRunner)` is a drop-in
   for `Gh::new(ProcessRunner)`.
 - `Runner` is the seam to the process: `ProcessRunner` spawns it, a test supplies a fake.
 - `Mergeable` is `Mergeable`, `Conflicting`, `Unknown` (the platform computes it lazily,
   ask again later) or `Other(text)` for a value this crate has no name for.
-- Every failure is an `Error`: `Run` (tool missing, non-zero exit, with its stderr) or
-  `Parse` (an answer of the wrong shape). Nothing is swallowed.
+- Every failure is an `Error`: `Run` (tool missing, non-zero exit, with its stderr),
+  `Parse` (an answer of the wrong shape) or `Unsupported` (the adapter lacks the operation,
+  nothing was run). Nothing is swallowed.
 
 ### Limits
 
 `Gh` and `Glab` exist; no Gitea or Bitbucket yet. Nothing here depends on **actit** or
 **actname**.
+
+`Glab` does not implement `user`, `repo_exists` and `search_repos`: they answer
+`Error::Unsupported`.
 
 `Glab` is tested against a scripted runner only, never against a live GitLab: its JSON field
 names (`iid`, `detailed_merge_status`, `has_conflicts`, `path_with_namespace`,
