@@ -1,8 +1,8 @@
 # actautoma
 
-Rust library. Purpose: handle the tools of repository-hosting platforms (`gh` for
-GitHub, `glab` for GitLab, and others). Only `version()` exists so far; this
-README states what exists today and grows with the API.
+Rust library that handles the tools of repository-hosting platforms (`gh` for
+GitHub, `glab` for GitLab, and others). The `gh` adapter exists; this README
+states what exists today and grows with the API.
 
 ## Install
 
@@ -23,16 +23,38 @@ None.
 
 ### Library
 
-```rust
-assert_eq!(actautoma::version(), env!("CARGO_PKG_VERSION"));
+```rust,no_run
+use actautoma::{forge::{Forge, NewPullRequest}, gh::Gh, process::ProcessRunner};
+
+let forge = Gh::new(ProcessRunner).in_dir("."); // `.program("/opt/gh")` picks another binary
+let url = forge.create_pr(&NewPullRequest {
+    base: "main".into(),
+    head: "feat/x".into(),
+    title: "Add x".into(),
+    body: "Why x.".into(),
+})?;
+let pr = forge.view_pr(None)?; // PullRequest { number, title, head, base, author, mergeable, review, merge_state }
+if pr.mergeable == actautoma::forge::Mergeable::Mergeable {
+    forge.merge_pr(pr.number)?; // merges and deletes the branch
+}
+# Ok::<(), actautoma::forge::Error>(())
 ```
 
-`version() -> &'static str` returns the crate version from `Cargo.toml`. It is
-the only public item.
+- `Forge` (in `forge`) is the port: pull requests (`view_pr`, `create_pr`, `merge_pr`),
+  repositories (`view_repo`, `set_default_branch`, `create_repo`) and `available`, which
+  fails when the platform tool is missing. One adapter per
+  platform tool; `Gh` (GitHub, `gh`) is the first. `glab` and others plug in by
+  implementing it.
+- `Runner` is the seam to the process: `ProcessRunner` spawns it, a test supplies a fake.
+- `Mergeable` is `Mergeable`, `Conflicting`, `Unknown` (the platform computes it lazily,
+  ask again later) or `Other(text)` for a value this crate has no name for.
+- Every failure is an `Error`: `Run` (tool missing, non-zero exit, with its stderr) or
+  `Parse` (an answer of the wrong shape). Nothing is swallowed.
 
 ### Limits
 
-No feature yet. Nothing here depends on **actit** or **actname**.
+Only the `gh` adapter exists. No `glab` yet. Nothing here depends on **actit** or
+**actname**.
 
 ## Develop
 
