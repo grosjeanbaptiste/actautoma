@@ -2,7 +2,11 @@
 
 pub mod forge;
 pub mod gh;
+pub mod glab;
 pub mod process;
+
+#[cfg(test)]
+mod testing;
 
 /// Compiles the README examples so the documented API cannot drift from the code.
 #[cfg(doctest)]

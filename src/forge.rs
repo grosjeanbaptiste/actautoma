@@ -105,3 +105,15 @@ pub trait Forge {
     /// Fails unless the platform tool is installed: lets a caller refuse before changing anything.
     fn available(&self) -> Result<(), Error>;
 }
+
+/// Parses `"<slug> <default branch>"`, the answer both adapters ask their tool for.
+pub(crate) fn parse_repo(raw: String) -> Result<Repo, Error> {
+    let mut words = raw.split_whitespace();
+    match (words.next(), words.next(), words.next()) {
+        (Some(slug), Some(branch), None) => Ok(Repo {
+            slug: slug.into(),
+            default_branch: branch.into(),
+        }),
+        _ => Err(Error::Parse(raw)),
+    }
+}
