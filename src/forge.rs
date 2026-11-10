@@ -1,7 +1,7 @@
 //! The port: what a repository-hosting platform can do, whatever its CLI.
 
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Why a platform operation failed. Never swallowed: callers see it.
 #[derive(Debug, PartialEq, Eq)]
@@ -71,6 +71,24 @@ pub struct NewPullRequest {
     pub body: String,
 }
 
+/// A hosted repository, as the platform names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Repo {
+    /// `owner/name`.
+    pub slug: String,
+    pub default_branch: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewRepo {
+    pub name: String,
+    /// The local repository the hosted one is created from.
+    pub source: PathBuf,
+    pub private: bool,
+    /// Push the local branches right after creating it.
+    pub push: bool,
+}
+
 /// A repository-hosting platform. One adapter per platform tool (`gh`, `glab`, ...).
 pub trait Forge {
     /// The pull request of the current branch, or number `number`.
@@ -79,4 +97,11 @@ pub trait Forge {
     fn create_pr(&self, pr: &NewPullRequest) -> Result<String, Error>;
     /// Merges pull request `number` and deletes its branch.
     fn merge_pr(&self, number: u64) -> Result<(), Error>;
+    /// The hosted repository of the working directory.
+    fn view_repo(&self) -> Result<Repo, Error>;
+    /// Makes `branch` the default branch of repository `slug`.
+    fn set_default_branch(&self, slug: &str, branch: &str) -> Result<(), Error>;
+    fn create_repo(&self, repo: &NewRepo) -> Result<(), Error>;
+    /// Fails unless the platform tool is installed: lets a caller refuse before changing anything.
+    fn available(&self) -> Result<(), Error>;
 }

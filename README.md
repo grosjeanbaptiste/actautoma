@@ -40,7 +40,9 @@ if pr.mergeable == actautoma::forge::Mergeable::Mergeable {
 # Ok::<(), actautoma::forge::Error>(())
 ```
 
-- `Forge` (in `forge`) is the port: `view_pr`, `create_pr`, `merge_pr`. One adapter per
+- `Forge` (in `forge`) is the port: pull requests (`view_pr`, `create_pr`, `merge_pr`),
+  repositories (`view_repo`, `set_default_branch`, `create_repo`) and `available`, which
+  fails when the platform tool is missing. One adapter per
   platform tool; `Gh` (GitHub, `gh`) is the first. `glab` and others plug in by
   implementing it.
 - `Runner` is the seam to the process: `ProcessRunner` spawns it, a test supplies a fake.

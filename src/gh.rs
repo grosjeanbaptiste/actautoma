@@ -1,6 +1,6 @@
 //! The `gh` (GitHub) adapter of [`Forge`].
 
-use crate::forge::{Error, Forge, Mergeable, NewPullRequest, PullRequest, Runner};
+use crate::forge::{Error, Forge, Mergeable, NewPullRequest, NewRepo, PullRequest, Repo, Runner};
 use std::path::{Path, PathBuf};
 
 const FIELDS: &str =
@@ -82,6 +82,56 @@ impl<R: Runner> Forge for Gh<R> {
         let n = number.to_string();
         self.gh(&["pr", "merge", &n, "--merge", "--delete-branch"])
             .map(drop)
+    }
+
+    fn view_repo(&self) -> Result<Repo, Error> {
+        let query = r#".nameWithOwner + " " + .defaultBranchRef.name"#;
+        let args = [
+            "repo",
+            "view",
+            "--json",
+            "nameWithOwner,defaultBranchRef",
+            "-q",
+            query,
+        ];
+        let raw = self.gh(&args)?;
+        let mut words = raw.split_whitespace();
+        match (words.next(), words.next(), words.next()) {
+            (Some(slug), Some(branch), None) => Ok(Repo {
+                slug: slug.into(),
+                default_branch: branch.into(),
+            }),
+            _ => Err(Error::Parse(raw)),
+        }
+    }
+
+    fn set_default_branch(&self, slug: &str, branch: &str) -> Result<(), Error> {
+        self.gh(&["repo", "edit", slug, "--default-branch", branch])
+            .map(drop)
+    }
+
+    fn create_repo(&self, repo: &NewRepo) -> Result<(), Error> {
+        let source = repo.source.to_string_lossy();
+        let mut args = vec![
+            "repo",
+            "create",
+            &repo.name,
+            if repo.private {
+                "--private"
+            } else {
+                "--public"
+            },
+            "--source",
+            &source,
+        ];
+        if repo.push {
+            args.push("--push");
+        }
+        self.gh(&args).map(drop)
+    }
+
+    fn available(&self) -> Result<(), Error> {
+        self.gh(&["--version"]).map(drop)
     }
 }
 
@@ -252,5 +302,115 @@ mod tests {
         let (program, _, dir) = f.call(0);
         assert_eq!(program, "/opt/gh");
         assert_eq!(dir, Some(PathBuf::from("/work/r")));
+    }
+
+    #[test]
+    fn view_repo_asks_for_the_slug_and_the_default_branch() {
+        let f = Fake::answering(vec![Ok("me/ss master\n".into())]);
+        let repo = Gh::new(&f).in_dir("/work/r").view_repo().unwrap();
+        assert_eq!(
+            repo,
+            Repo {
+                slug: "me/ss".into(),
+                default_branch: "master".into()
+            }
+        );
+        let (program, args, dir) = f.call(0);
+        assert_eq!(program, "gh");
+        assert_eq!(
+            &args[..4],
+            ["repo", "view", "--json", "nameWithOwner,defaultBranchRef"]
+        );
+        assert_eq!(args[4], "-q");
+        assert_eq!(dir, Some(PathBuf::from("/work/r")));
+    }
+
+    #[test]
+    fn view_repo_rejects_an_answer_with_the_wrong_shape() {
+        for raw in ["", "me/ss\n", "a b c\n"] {
+            let f = Fake::answering(vec![Ok(raw.into())]);
+            let err = Gh::new(&f).view_repo().unwrap_err();
+            assert!(
+                matches!(&err, Error::Parse(m) if m == raw),
+                "{raw:?}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn set_default_branch_edits_the_repository() {
+        let f = Fake::answering(vec![Ok(String::new())]);
+        Gh::new(&f).set_default_branch("me/ss", "main").unwrap();
+        assert_eq!(
+            f.call(0).1,
+            ["repo", "edit", "me/ss", "--default-branch", "main"]
+        );
+    }
+
+    #[test]
+    fn create_repo_is_private_and_pushed_when_asked() {
+        let f = Fake::answering(vec![Ok(String::new())]);
+        let repo = NewRepo {
+            name: "ss".into(),
+            source: "/w/ss".into(),
+            private: true,
+            push: true,
+        };
+        Gh::new(&f).create_repo(&repo).unwrap();
+        assert_eq!(
+            f.call(0).1,
+            [
+                "repo",
+                "create",
+                "ss",
+                "--private",
+                "--source",
+                "/w/ss",
+                "--push"
+            ]
+        );
+    }
+
+    #[test]
+    fn create_repo_can_be_public_and_unpushed() {
+        let f = Fake::answering(vec![Ok(String::new())]);
+        let repo = NewRepo {
+            name: "ss".into(),
+            source: "/w/ss".into(),
+            private: false,
+            push: false,
+        };
+        Gh::new(&f).create_repo(&repo).unwrap();
+        assert_eq!(
+            f.call(0).1,
+            ["repo", "create", "ss", "--public", "--source", "/w/ss"]
+        );
+    }
+
+    #[test]
+    fn available_asks_the_tool_for_its_version() {
+        let f = Fake::answering(vec![Ok("gh version 2\n".into())]);
+        Gh::new(&f).available().unwrap();
+        assert_eq!(f.call(0).1, ["--version"]);
+    }
+
+    #[test]
+    fn repo_operations_report_the_runner_failure() {
+        let boom = || Err(Error::Run("boom".into()));
+        let f = Fake::answering(vec![boom(), boom(), boom(), boom()]);
+        let gh = Gh::new(&f);
+        let new = NewRepo {
+            name: "a".into(),
+            source: "/a".into(),
+            private: true,
+            push: true,
+        };
+        assert_eq!(gh.view_repo(), Err(Error::Run("boom".into())));
+        assert_eq!(
+            gh.set_default_branch("a/b", "main"),
+            Err(Error::Run("boom".into()))
+        );
+        assert_eq!(gh.create_repo(&new), Err(Error::Run("boom".into())));
+        assert_eq!(gh.available(), Err(Error::Run("boom".into())));
     }
 }
