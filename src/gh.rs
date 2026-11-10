@@ -1,7 +1,8 @@
 //! The `gh` (GitHub) adapter of [`Forge`].
 
 use crate::forge::{
-    parse_repo, Error, Forge, Mergeable, NewPullRequest, NewRepo, PullRequest, Repo, Runner,
+    fields, parse_open_prs, parse_repo, CiRun, Error, Forge, Mergeable, NewPullRequest, NewRepo,
+    OpenPr, PullRequest, Repo, Runner,
 };
 use std::path::{Path, PathBuf};
 
@@ -9,6 +10,10 @@ const FIELDS: &str =
     "number,title,headRefName,baseRefName,author,mergeable,reviewDecision,mergeStateStatus";
 /// Unit separator: cannot occur in a title, unlike `|` or a tab.
 const JQ: &str = r#"[.number,.title,.headRefName,.baseRefName,.author.login,.mergeable,.reviewDecision,.mergeStateStatus]|map(tostring)|join("\u001f")"#;
+
+const OPEN_JQ: &str = r#".[]|[.number,.author.login,.updatedAt]|map(tostring)|join("\u001f")"#;
+const RUN_JQ: &str =
+    r#".[]|[.workflowName,.conclusion,.status,.createdAt[0:10]]|map(tostring)|join("\u001f")"#;
 
 /// `gh`, the GitHub CLI, behind a [`Runner`].
 pub struct Gh<R> {
@@ -122,6 +127,53 @@ impl<R: Runner> Forge for Gh<R> {
             args.push("--push");
         }
         self.gh(&args).map(drop)
+    }
+
+    fn open_prs(&self) -> Result<Vec<OpenPr>, Error> {
+        let args = [
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--limit",
+            "1000",
+            "--json",
+            "number,author,updatedAt",
+            "--jq",
+            OPEN_JQ,
+        ];
+        let raw = self.gh(&args)?;
+        let me = || self.gh(&["api", "user", "--jq", ".login"]);
+        parse_open_prs(&raw, me, str::to_string)
+    }
+
+    fn last_run(&self, branch: &str) -> Result<Option<CiRun>, Error> {
+        let args = [
+            "run",
+            "list",
+            "--branch",
+            branch,
+            "--limit",
+            "1",
+            "--json",
+            "workflowName,conclusion,status,createdAt",
+            "--jq",
+            RUN_JQ,
+        ];
+        let raw = self.gh(&args)?;
+        Ok(fields::<4>(&raw)?
+            .first()
+            .map(|[workflow, conclusion, status, date]| CiRun {
+                workflow: workflow.to_string(),
+                // A run still going has an empty conclusion.
+                state: if conclusion.is_empty() {
+                    status
+                } else {
+                    conclusion
+                }
+                .to_string(),
+                date: date.to_string(),
+            }))
     }
 
     fn available(&self) -> Result<(), Error> {
@@ -375,5 +427,120 @@ mod tests {
         );
         assert_eq!(gh.create_repo(&new), Err(Error::Run("boom".into())));
         assert_eq!(gh.available(), Err(Error::Run("boom".into())));
+    }
+
+    fn pr_line(n: u32, who: &str, at: &str) -> String {
+        format!("{n}{US}{who}{US}{at}\n")
+    }
+
+    #[test]
+    fn open_prs_lists_open_pull_requests_and_marks_mine() {
+        let list =
+            pr_line(3, "me", "2026-01-01T00:00:00Z") + &pr_line(4, "bob", "2026-02-01T10:20:30Z");
+        let f = Fake::answering(vec![Ok(list), Ok("me\n".into())]);
+        let prs = Gh::new(&f).in_dir("/w/r").open_prs().unwrap();
+        let (program, args, dir) = f.call(0);
+        assert_eq!(program, "gh");
+        assert_eq!(&args[..4], ["pr", "list", "--state", "open"]);
+        assert!(args.contains(&"--json".to_string()));
+        assert_eq!(dir, Some(PathBuf::from("/w/r")));
+        assert_eq!(f.call(1).1, ["api", "user", "--jq", ".login"]);
+        assert_eq!(
+            prs,
+            [
+                OpenPr {
+                    number: 3,
+                    mine: true,
+                    updated_at: "2026-01-01T00:00:00Z".into()
+                },
+                OpenPr {
+                    number: 4,
+                    mine: false,
+                    updated_at: "2026-02-01T10:20:30Z".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn open_prs_of_a_repository_without_any_asks_nobody_who_i_am() {
+        let f = Fake::answering(vec![Ok(String::new())]);
+        assert_eq!(Gh::new(&f).open_prs().unwrap(), []);
+        assert_eq!(f.calls_len(), 1);
+    }
+
+    #[test]
+    fn open_prs_rejects_a_line_of_the_wrong_shape() {
+        let f = Fake::answering(vec![Ok("3\u{1f}me\n".into()), Ok("me\n".into())]);
+        assert_eq!(
+            Gh::new(&f).open_prs(),
+            Err(Error::Parse("3\u{1f}me\n".into()))
+        );
+    }
+
+    #[test]
+    fn open_prs_rejects_a_non_numeric_number() {
+        let raw = pr_line(0, "me", "x").replacen('0', "x", 1);
+        let f = Fake::answering(vec![Ok(raw.clone()), Ok("me\n".into())]);
+        assert_eq!(Gh::new(&f).open_prs(), Err(Error::Parse(raw)));
+    }
+
+    #[test]
+    fn open_prs_failures_reach_the_caller() {
+        let f = Fake::answering(vec![Err(Error::Run("no auth".into()))]);
+        assert_eq!(Gh::new(&f).open_prs(), Err(Error::Run("no auth".into())));
+        let f = Fake::answering(vec![
+            Ok(pr_line(3, "me", "t")),
+            Err(Error::Run("no user".into())),
+        ]);
+        assert_eq!(Gh::new(&f).open_prs(), Err(Error::Run("no user".into())));
+    }
+
+    #[test]
+    fn last_run_asks_for_the_one_latest_run_of_the_branch() {
+        let f = Fake::answering(vec![Ok(format!(
+            "CI{US}success{US}completed{US}2026-11-09\n"
+        ))]);
+        let run = Gh::new(&f).last_run("develop").unwrap();
+        let (_, args, _) = f.call(0);
+        assert_eq!(
+            &args[..5],
+            ["run", "list", "--branch", "develop", "--limit"]
+        );
+        assert_eq!(args[5], "1");
+        assert_eq!(
+            run,
+            Some(CiRun {
+                workflow: "CI".into(),
+                state: "success".into(),
+                date: "2026-11-09".into()
+            })
+        );
+    }
+
+    #[test]
+    fn a_run_in_progress_has_no_conclusion_so_its_status_is_the_state() {
+        let f = Fake::answering(vec![Ok(format!("CI{US}{US}in_progress{US}2026-11-09\n"))]);
+        assert_eq!(
+            Gh::new(&f).last_run("main").unwrap().unwrap().state,
+            "in_progress"
+        );
+    }
+
+    #[test]
+    fn a_branch_that_never_ran_has_no_last_run() {
+        let f = Fake::answering(vec![Ok(String::new())]);
+        assert_eq!(Gh::new(&f).last_run("main").unwrap(), None);
+    }
+
+    #[test]
+    fn last_run_rejects_the_wrong_shape_and_passes_failures_on() {
+        let f = Fake::answering(vec![Ok("CI\n".into())]);
+        assert_eq!(
+            Gh::new(&f).last_run("main"),
+            Err(Error::Parse("CI\n".into()))
+        );
+        let f = Fake::answering(vec![Err(Error::Run("boom".into()))]);
+        assert_eq!(Gh::new(&f).last_run("main"), Err(Error::Run("boom".into())));
     }
 }

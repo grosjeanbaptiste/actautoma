@@ -1,12 +1,16 @@
 //! The `glab` (GitLab) adapter of [`Forge`]. A pull request is a GitLab merge request.
 
 use crate::forge::{
-    parse_repo, Error, Forge, Mergeable, NewPullRequest, NewRepo, PullRequest, Repo, Runner,
+    fields, parse_open_prs, parse_repo, CiRun, Error, Forge, Mergeable, NewPullRequest, NewRepo,
+    OpenPr, PullRequest, Repo, Runner,
 };
 use std::path::{Path, PathBuf};
 
 const FIELDS_JQ: &str = r#"[.iid,.title,.source_branch,.target_branch,.author.username,.detailed_merge_status,.has_conflicts]|map(tostring)|join("\u001f")"#;
 const REPO_JQ: &str = r#".path_with_namespace + " " + .default_branch"#;
+
+const OPEN_JQ: &str = r#".[]|[.iid,.author.username,.updated_at]|map(tostring)|join("\u001f")"#;
+const RUN_JQ: &str = r#".[]|[.status,.created_at]|map(tostring)|join("\u001f")"#;
 
 /// `glab`, the GitLab CLI, behind a [`Runner`].
 pub struct Glab<R> {
@@ -129,6 +133,45 @@ impl<R: Runner> Forge for Glab<R> {
                 .run("git", &["push", "-u", "origin", "--all"], dir)?;
         }
         Ok(())
+    }
+
+    fn open_prs(&self) -> Result<Vec<OpenPr>, Error> {
+        let args = [
+            "mr",
+            "list",
+            "--output",
+            "json",
+            "--per-page",
+            "100",
+            "--jq",
+            OPEN_JQ,
+        ];
+        let raw = self.glab(&args)?;
+        let me = || self.glab(&["api", "user", "--jq", ".username"]);
+        // GitLab writes milliseconds: keep the seconds, as the port promises.
+        parse_open_prs(&raw, me, |t| format!("{}Z", t.get(..19).unwrap_or(t)))
+    }
+
+    fn last_run(&self, branch: &str) -> Result<Option<CiRun>, Error> {
+        let args = [
+            "ci",
+            "list",
+            "--ref",
+            branch,
+            "--per-page",
+            "1",
+            "--output",
+            "json",
+            "--jq",
+            RUN_JQ,
+        ];
+        let raw = self.glab(&args)?;
+        Ok(fields::<2>(&raw)?.first().map(|[state, created]| CiRun {
+            // GitLab pipelines have no workflow name.
+            workflow: "pipeline".into(),
+            state: state.to_string(),
+            date: created.get(..10).unwrap_or(created).to_string(),
+        }))
     }
 
     fn available(&self) -> Result<(), Error> {
@@ -383,6 +426,74 @@ mod tests {
         assert_eq!(
             Glab::new(&f).view_pr(None),
             Err(Error::Run("glab: not logged in".into()))
+        );
+    }
+
+    #[test]
+    fn open_prs_lists_open_merge_requests_with_second_precision() {
+        let list =
+            format!("3{US}me{US}2026-01-01T00:00:00.123Z\n4{US}bob{US}2026-02-01T10:20:30.000Z\n");
+        let f = Fake::answering(vec![Ok(list), Ok("me\n".into())]);
+        let prs = Glab::new(&f).open_prs().unwrap();
+        assert_eq!(&f.call(0).1[..2], ["mr", "list"]);
+        assert_eq!(f.call(1).1, ["api", "user", "--jq", ".username"]);
+        assert_eq!(
+            prs,
+            [
+                OpenPr {
+                    number: 3,
+                    mine: true,
+                    updated_at: "2026-01-01T00:00:00Z".into()
+                },
+                OpenPr {
+                    number: 4,
+                    mine: false,
+                    updated_at: "2026-02-01T10:20:30Z".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn open_prs_without_any_asks_nobody_who_i_am_and_rejects_bad_lines() {
+        let f = Fake::answering(vec![Ok(String::new())]);
+        assert_eq!(Glab::new(&f).open_prs().unwrap(), []);
+        let f = Fake::answering(vec![Ok("x\n".into()), Ok("me\n".into())]);
+        assert_eq!(Glab::new(&f).open_prs(), Err(Error::Parse("x\n".into())));
+        let f = Fake::answering(vec![Err(Error::Run("no auth".into()))]);
+        assert_eq!(Glab::new(&f).open_prs(), Err(Error::Run("no auth".into())));
+    }
+
+    #[test]
+    fn last_run_reads_the_latest_pipeline_of_the_ref() {
+        let f = Fake::answering(vec![Ok(format!("success{US}2026-11-09T08:00:00.000Z\n"))]);
+        let run = Glab::new(&f).last_run("main").unwrap();
+        let args = f.call(0).1;
+        assert_eq!(&args[..2], ["ci", "list"]);
+        assert!(args.windows(2).any(|w| w == ["--ref", "main"]));
+        assert_eq!(
+            run,
+            Some(CiRun {
+                workflow: "pipeline".into(),
+                state: "success".into(),
+                date: "2026-11-09".into()
+            })
+        );
+    }
+
+    #[test]
+    fn last_run_without_pipeline_is_none_and_failures_surface() {
+        let f = Fake::answering(vec![Ok(String::new())]);
+        assert_eq!(Glab::new(&f).last_run("main").unwrap(), None);
+        let f = Fake::answering(vec![Ok("success\n".into())]);
+        assert_eq!(
+            Glab::new(&f).last_run("main"),
+            Err(Error::Parse("success\n".into()))
+        );
+        let f = Fake::answering(vec![Err(Error::Run("boom".into()))]);
+        assert_eq!(
+            Glab::new(&f).last_run("main"),
+            Err(Error::Run("boom".into()))
         );
     }
 }

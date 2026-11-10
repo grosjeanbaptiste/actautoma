@@ -71,6 +71,26 @@ pub struct NewPullRequest {
     pub body: String,
 }
 
+/// An open pull request, as far as a health report needs it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenPr {
+    pub number: u64,
+    /// Opened by the signed-in user.
+    pub mine: bool,
+    /// Last update, `YYYY-MM-DDTHH:MM:SSZ` (UTC), so dates compare as text.
+    pub updated_at: String,
+}
+
+/// The latest CI run of a branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CiRun {
+    pub workflow: String,
+    /// The conclusion when the run is over, its status while it runs.
+    pub state: String,
+    /// `YYYY-MM-DD`.
+    pub date: String,
+}
+
 /// A hosted repository, as the platform names it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Repo {
@@ -102,6 +122,10 @@ pub trait Forge {
     /// Makes `branch` the default branch of repository `slug`.
     fn set_default_branch(&self, slug: &str, branch: &str) -> Result<(), Error>;
     fn create_repo(&self, repo: &NewRepo) -> Result<(), Error>;
+    /// Every open pull request of the hosted repository.
+    fn open_prs(&self) -> Result<Vec<OpenPr>, Error>;
+    /// The latest CI run on `branch`; `None` when it never ran.
+    fn last_run(&self, branch: &str) -> Result<Option<CiRun>, Error>;
     /// Fails unless the platform tool is installed: lets a caller refuse before changing anything.
     fn available(&self) -> Result<(), Error>;
 }
@@ -115,5 +139,50 @@ pub(crate) fn parse_repo(raw: String) -> Result<Repo, Error> {
             default_branch: branch.into(),
         }),
         _ => Err(Error::Parse(raw)),
+    }
+}
+
+/// Splits `raw` into lines of `N` unit-separated fields; a line of another shape is a parse error.
+pub(crate) fn fields<const N: usize>(raw: &str) -> Result<Vec<[&str; N]>, Error> {
+    raw.lines()
+        .map(|line| {
+            let f: Vec<&str> = line.split('\u{1f}').collect();
+            <[&str; N]>::try_from(f).map_err(|_| Error::Parse(raw.to_string()))
+        })
+        .collect()
+}
+
+/// Builds the open pull requests from `number, author, updated` lines. `me` names the
+/// signed-in user and is asked only when there is a line to compare it with.
+pub(crate) fn parse_open_prs(
+    raw: &str,
+    me: impl FnOnce() -> Result<String, Error>,
+    at: fn(&str) -> String,
+) -> Result<Vec<OpenPr>, Error> {
+    let rows = fields::<3>(raw)?;
+    if rows.is_empty() {
+        return Ok(vec![]);
+    }
+    let me = me()?;
+    let me = me.trim();
+    rows.into_iter()
+        .map(|[number, author, updated]| {
+            Ok(OpenPr {
+                number: number.parse().map_err(|_| Error::Parse(raw.to_string()))?,
+                mine: author == me,
+                updated_at: at(updated),
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn errors_say_what_failed() {
+        assert_eq!(Error::Run("gh: boom".into()).to_string(), "gh: boom");
+        assert_eq!(Error::Parse("x".into()).to_string(), "unexpected answer: x");
     }
 }
