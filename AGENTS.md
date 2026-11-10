@@ -15,8 +15,8 @@ them. Update it (and its date) after any act that changes that state.
 
 ## What this is
 
-<one-paragraph description of the project's purpose — replace this when the
-repo gains shape>
+Rust library that handles the tools of repository-hosting platforms: `gh` for
+GitHub, `glab` for GitLab, and others. Only `version()` exists so far.
 
 ## Conventions
 

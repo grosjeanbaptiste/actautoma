@@ -1,7 +1,8 @@
 # actautoma
 
-Rust library. Its purpose is not defined yet: the crate only exposes its own
-version. This README states what exists today and grows with the API.
+Rust library. Purpose: handle the tools of repository-hosting platforms (`gh` for
+GitHub, `glab` for GitLab, and others). Only `version()` exists so far; this
+README states what exists today and grows with the API.
 
 ## Install
 
