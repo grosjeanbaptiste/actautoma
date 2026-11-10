@@ -385,4 +385,20 @@ mod tests {
             Err(Error::Run("glab: not logged in".into()))
         );
     }
+
+    #[test]
+    fn name_search_is_not_supported_and_says_so() {
+        let f = Fake::answering(vec![]);
+        let glab = Glab::new(&f);
+        assert!(matches!(glab.user(), Err(Error::Unsupported(_))));
+        assert!(matches!(
+            glab.repo_exists("a", "b"),
+            Err(Error::Unsupported(_))
+        ));
+        assert!(matches!(glab.search_repos("x"), Err(Error::Unsupported(_))));
+        assert!(
+            f.calls_len() == 0,
+            "an unsupported operation must not run anything"
+        );
+    }
 }
