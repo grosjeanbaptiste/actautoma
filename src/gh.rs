@@ -1,6 +1,8 @@
 //! The `gh` (GitHub) adapter of [`Forge`].
 
-use crate::forge::{Error, Forge, Mergeable, NewPullRequest, NewRepo, PullRequest, Repo, Runner};
+use crate::forge::{
+    parse_repo, Error, Forge, Mergeable, NewPullRequest, NewRepo, PullRequest, Repo, Runner,
+};
 use std::path::{Path, PathBuf};
 
 const FIELDS: &str =
@@ -94,15 +96,7 @@ impl<R: Runner> Forge for Gh<R> {
             "-q",
             query,
         ];
-        let raw = self.gh(&args)?;
-        let mut words = raw.split_whitespace();
-        match (words.next(), words.next(), words.next()) {
-            (Some(slug), Some(branch), None) => Ok(Repo {
-                slug: slug.into(),
-                default_branch: branch.into(),
-            }),
-            _ => Err(Error::Parse(raw)),
-        }
+        parse_repo(self.gh(&args)?)
     }
 
     fn set_default_branch(&self, slug: &str, branch: &str) -> Result<(), Error> {
@@ -138,38 +132,7 @@ impl<R: Runner> Forge for Gh<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
-
-    type Call = (String, Vec<String>, Option<PathBuf>);
-
-    /// Scripted runner: records every call, answers from a queue.
-    struct Fake {
-        calls: RefCell<Vec<Call>>,
-        answers: RefCell<Vec<Result<String, Error>>>,
-    }
-
-    impl Fake {
-        fn answering(answers: Vec<Result<String, Error>>) -> Self {
-            Fake {
-                calls: RefCell::default(),
-                answers: RefCell::new(answers),
-            }
-        }
-        fn call(&self, i: usize) -> Call {
-            self.calls.borrow()[i].clone()
-        }
-    }
-
-    impl Runner for &Fake {
-        fn run(&self, program: &str, args: &[&str], dir: Option<&Path>) -> Result<String, Error> {
-            self.calls.borrow_mut().push((
-                program.to_string(),
-                args.iter().map(|a| a.to_string()).collect(),
-                dir.map(Path::to_path_buf),
-            ));
-            self.answers.borrow_mut().remove(0)
-        }
-    }
+    use crate::testing::Fake;
 
     const US: char = '\u{1f}';
 
