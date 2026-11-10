@@ -1,5 +1,10 @@
 //! actautoma — TODO: describe the crate.
 
+/// Compiles the README examples so the documented API cannot drift from the code.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
+
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }

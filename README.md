@@ -1,11 +1,41 @@
 # actautoma
 
-<one-line description>
+Rust library. Its purpose is not defined yet: the crate only exposes its own
+version. This README states what exists today and grows with the API.
 
-## Build
+## Install
 
-<how to build / run>
+Needs Rust (`rustup`). `actautoma` is a library: it ships no binary, so there is
+nothing to `cargo install`. Add it to another crate:
 
-## Structure
+```text
+cargo add --git https://github.com/grosjeanbaptiste/actautoma
+```
 
-<short layout overview>
+From a checkout: `cargo test` builds and checks it.
+
+## API
+
+### Command line
+
+None.
+
+### Library
+
+```rust
+assert_eq!(actautoma::version(), env!("CARGO_PKG_VERSION"));
+```
+
+`version() -> &'static str` returns the crate version from `Cargo.toml`. It is
+the only public item.
+
+### Limits
+
+No feature yet. Nothing here depends on **actit** or **actname**.
+
+## Develop
+
+```text
+dotfiles heavy run --medium -- cargo test
+dotfiles heavy run --medium -- cargo clippy --all-targets -- -D warnings
+```
