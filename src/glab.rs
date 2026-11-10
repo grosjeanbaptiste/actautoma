@@ -430,6 +430,22 @@ mod tests {
     }
 
     #[test]
+    fn name_search_is_not_supported_and_says_so() {
+        let f = Fake::answering(vec![]);
+        let glab = Glab::new(&f);
+        assert!(matches!(glab.user(), Err(Error::Unsupported(_))));
+        assert!(matches!(
+            glab.repo_exists("a", "b"),
+            Err(Error::Unsupported(_))
+        ));
+        assert!(matches!(glab.search_repos("x"), Err(Error::Unsupported(_))));
+        assert!(
+            f.calls_len() == 0,
+            "an unsupported operation must not run anything"
+        );
+    }
+
+    #[test]
     fn open_prs_lists_open_merge_requests_with_second_precision() {
         let list =
             format!("3{US}me{US}2026-01-01T00:00:00.123Z\n4{US}bob{US}2026-02-01T10:20:30.000Z\n");
