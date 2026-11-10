@@ -172,6 +172,17 @@ mod tests {
     }
 
     #[test]
+    fn mergeable_prints_as_the_platform_wrote_it() {
+        for raw in ["MERGEABLE", "CONFLICTING", "UNKNOWN", "WEIRD"] {
+            let f = Fake::answering(vec![Ok(view_answer(raw))]);
+            assert_eq!(
+                Gh::new(&f).view_pr(None).unwrap().mergeable.to_string(),
+                raw
+            );
+        }
+    }
+
+    #[test]
     fn view_pr_rejects_an_answer_with_the_wrong_shape() {
         let f = Fake::answering(vec![Ok("nope\n".into())]);
         let err = Gh::new(&f).view_pr(None).unwrap_err();

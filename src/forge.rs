@@ -39,6 +39,18 @@ pub enum Mergeable {
     Other(String),
 }
 
+impl fmt::Display for Mergeable {
+    /// The platform's own word: `MERGEABLE`, `CONFLICTING`, `UNKNOWN`, or the kept value.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Mergeable::Mergeable => "MERGEABLE",
+            Mergeable::Conflicting => "CONFLICTING",
+            Mergeable::Unknown => "UNKNOWN",
+            Mergeable::Other(v) => v,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PullRequest {
     pub number: u64,
