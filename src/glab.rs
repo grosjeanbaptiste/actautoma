@@ -439,6 +439,10 @@ mod tests {
             Err(Error::Unsupported(_))
         ));
         assert!(matches!(glab.search_repos("x"), Err(Error::Unsupported(_))));
+        assert!(matches!(
+            glab.rename_repo("me/a", "b"),
+            Err(Error::Unsupported(_))
+        ));
         assert!(
             f.calls_len() == 0,
             "an unsupported operation must not run anything"

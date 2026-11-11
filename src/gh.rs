@@ -188,6 +188,11 @@ impl<R: Runner> Forge for Gh<R> {
         }
     }
 
+    fn rename_repo(&self, slug: &str, new_name: &str) -> Result<(), Error> {
+        self.gh(&["repo", "rename", new_name, "--repo", slug, "--yes"])
+            .map(drop)
+    }
+
     fn repo_exists(&self, owner: &str, name: &str) -> Result<bool, Error> {
         match self.gh(&["api", &format!("repos/{owner}/{name}")]) {
             Ok(_) => Ok(true),
@@ -390,6 +395,23 @@ mod tests {
             f.call(0).1,
             ["repo", "edit", "me/ss", "--default-branch", "main"]
         );
+    }
+
+    #[test]
+    fn rename_repo_asks_gh_to_rename_without_a_prompt() {
+        let f = Fake::answering(vec![Ok(String::new())]);
+        Gh::new(&f).rename_repo("me/old", "new").unwrap();
+        assert_eq!(
+            f.call(0).1,
+            ["repo", "rename", "new", "--repo", "me/old", "--yes"]
+        );
+    }
+
+    #[test]
+    fn rename_repo_surfaces_the_tool_failure() {
+        let f = Fake::answering(vec![Err(Error::Run("name already taken".into()))]);
+        let err = Gh::new(&f).rename_repo("me/old", "new").unwrap_err();
+        assert_eq!(err, Error::Run("name already taken".into()));
     }
 
     #[test]

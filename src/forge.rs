@@ -149,6 +149,10 @@ pub trait Forge {
     fn user(&self) -> Result<String, Error> {
         Err(Error::Unsupported("user".into()))
     }
+    /// Renames repository `slug` to `new_name` (same owner) on the platform.
+    fn rename_repo(&self, _slug: &str, _new_name: &str) -> Result<(), Error> {
+        Err(Error::Unsupported("rename_repo".into()))
+    }
     /// Whether repository `owner/name` exists; a platform error is not `false`.
     fn repo_exists(&self, _owner: &str, _name: &str) -> Result<bool, Error> {
         Err(Error::Unsupported("repo_exists".into()))

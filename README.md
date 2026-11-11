@@ -6,8 +6,8 @@ states what exists today and grows with the API.
 
 ## Install
 
-Needs Rust (`rustup`). `actautoma` is a library: it ships no binary, so there is
-nothing to `cargo install`. Add it to another crate:
+Needs Rust (`rustup`). `actautoma` is a library with one small binary (`rename-repo`, below).
+On this machine: `dotfiles project install actautoma`. Add the library to another crate:
 
 ```text
 cargo add --git https://github.com/grosjeanbaptiste/actautoma
@@ -19,7 +19,16 @@ From a checkout: `cargo test` builds and checks it.
 
 ### Command line
 
-None.
+```text
+actautoma rename-repo OWNER/OLD NEW [--dir OLD_DIR] [--root DIR]... [--children DIR]... [--local-only] [--dry-run]
+```
+
+Renames `OWNER/OLD` to `NEW` on GitHub (`gh`), repoints the local `origin`, moves `OLD_DIR`
+(default: the current folder) to its sibling `NEW`, rewrites the old name in the text files
+under each `--root` and renames the children of each `--children` folder named after the
+encoded old folder. Every check runs before the first change. `--local-only` skips the
+platform (it already has the new name); `--dry-run` prints the rewrites and changes nothing.
+On this machine, `dotfiles project rename OWNER/OLD NEW` supplies the roots.
 
 ### Library
 
@@ -54,6 +63,37 @@ if pr.mergeable == actautoma::forge::Mergeable::Mergeable {
 - Every failure is an `Error`: `Run` (tool missing, non-zero exit, with its stderr),
   `Parse` (an answer of the wrong shape) or `Unsupported` (the adapter lacks the operation,
   nothing was run). Nothing is swallowed.
+
+### Realign after a rename
+
+`Forge::rename_repo(slug, new_name)` renames the repository on the platform (`Gh` only; `Glab`
+answers `Error::Unsupported`). The written references are then realigned by `realign`:
+
+```rust,no_run
+use actautoma::realign::{for_repo, replace};
+use actautoma::realign_fs::{realign_tree, rename_children};
+use std::path::Path;
+
+let home = Path::new("/Users/me");
+let renames = for_repo(
+    "me", "polytech-corpus", "corpus",
+    Path::new("/Users/me/Source/polytech-corpus"), Path::new("/Users/me/Source/corpus"), home,
+);
+let (_text, _count) = replace("git@github.com:me/polytech-corpus.git", &renames);
+let report = realign_tree(Path::new("/Users/me/machine"), &renames)?; // rewrites text files
+let _moved = rename_children(Path::new("/Users/me/claude-memory/projects"), &renames)?;
+println!("{} files rewritten, {} not text, {} links", report.changed.len(), report.not_text.len(), report.links.len());
+# Ok::<(), actautoma::forge::Error>(())
+```
+
+- `for_repo` lists the literal forms a rename leaves behind: `owner/old`, the directory, its
+  `~/` form under `home`, and the directory encoded as a file name (`/` becomes `-`).
+- `replace` only rewrites a whole name: `polytech` is not touched inside `polytech-corpus`.
+  A `.git` suffix and a sentence period do not hide a match.
+- `realign_tree` rewrites text files under a root and skips `.git`, `.venv`, `target`,
+  `node_modules`, `.lake` and caches. A non-UTF-8 file and a symlink are listed in the
+  `Report`, never skipped quietly. `rename_children` renames direct children whose whole name
+  is a `from`, and refuses to overwrite an existing target.
 
 ### Limits
 

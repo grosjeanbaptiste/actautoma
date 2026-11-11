@@ -1,4 +1,4 @@
-# actautoma — state as of <YYYY-MM-DD>
+# actautoma — state as of 2026-11-11
 
 The verified, current state of this project. Every session reads this file
 first and updates it after any act that changes the state (a send, a merge,
@@ -19,8 +19,8 @@ tokens or personal identifiers here.
 
 ## Current state
 
-<per area: what exists, what is decided, what is in progress — with the
-source of each fact>
+- `Forge::rename_repo` (`Gh` only; `Glab` is `Unsupported`) and the `realign` / `realign_fs` modules exist on branch `feat/realign-after-rename`, not committed: 79 unit tests and the README doctests pass, clippy `-D warnings` clean (run 2026-11-11).
+- `rename` module and the `actautoma rename-repo` binary (smoke-tested in a temp repo, `--local-only`); `dotfiles project rename` (`~/dotfiles/scripts/project-rename.sh`, 8 bats tests) calls it with this machine's roots. Both uncommitted. Not yet run on a real GitHub rename; the binary is not yet installed on PATH (`dotfiles project install actautoma` needs a committed tree).
 
 ## Decisions
 
