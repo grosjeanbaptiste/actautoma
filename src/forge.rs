@@ -135,9 +135,13 @@ pub trait Forge {
     fn set_default_branch(&self, slug: &str, branch: &str) -> Result<(), Error>;
     fn create_repo(&self, repo: &NewRepo) -> Result<(), Error>;
     /// Every open pull request of the hosted repository.
-    fn open_prs(&self) -> Result<Vec<OpenPr>, Error>;
+    fn open_prs(&self) -> Result<Vec<OpenPr>, Error> {
+        Err(Error::Unsupported("open_prs".into()))
+    }
     /// The latest CI run on `branch`; `None` when it never ran.
-    fn last_run(&self, branch: &str) -> Result<Option<CiRun>, Error>;
+    fn last_run(&self, _branch: &str) -> Result<Option<CiRun>, Error> {
+        Err(Error::Unsupported("last_run".into()))
+    }
     /// Fails unless the platform tool is installed: lets a caller refuse before changing anything.
     fn available(&self) -> Result<(), Error>;
 
@@ -209,5 +213,41 @@ mod tests {
     fn errors_say_what_failed() {
         assert_eq!(Error::Run("gh: boom".into()).to_string(), "gh: boom");
         assert_eq!(Error::Parse("x".into()).to_string(), "unexpected answer: x");
+    }
+
+    /// An adapter that predates the health-report queries: only the required methods.
+    struct Old;
+
+    impl Forge for Old {
+        fn view_pr(&self, _: Option<u64>) -> Result<PullRequest, Error> {
+            Err(Error::Run("x".into()))
+        }
+        fn create_pr(&self, _: &NewPullRequest) -> Result<String, Error> {
+            Err(Error::Run("x".into()))
+        }
+        fn merge_pr(&self, _: u64) -> Result<(), Error> {
+            Err(Error::Run("x".into()))
+        }
+        fn view_repo(&self) -> Result<Repo, Error> {
+            Err(Error::Run("x".into()))
+        }
+        fn set_default_branch(&self, _: &str, _: &str) -> Result<(), Error> {
+            Err(Error::Run("x".into()))
+        }
+        fn create_repo(&self, _: &NewRepo) -> Result<(), Error> {
+            Err(Error::Run("x".into()))
+        }
+        fn available(&self) -> Result<(), Error> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn an_adapter_without_the_report_queries_says_unsupported_instead_of_failing_to_compile() {
+        assert_eq!(Old.open_prs(), Err(Error::Unsupported("open_prs".into())));
+        assert_eq!(
+            Old.last_run("main"),
+            Err(Error::Unsupported("last_run".into()))
+        );
     }
 }
