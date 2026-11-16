@@ -3,8 +3,8 @@
 pub mod binary;
 pub mod forge;
 pub mod gh;
-pub mod install_records;
 pub mod glab;
+pub mod install_records;
 pub mod process;
 pub mod realign;
 pub mod realign_fs;
