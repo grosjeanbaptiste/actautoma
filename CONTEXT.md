@@ -31,3 +31,4 @@ tokens or personal identifiers here.
 <commands that recompute state from the repository instead of re-reading
 it, e.g. `scripts/status.py` — prefer a script whose output is a pure
 function of tracked files>
+- 2026-11-16 (branch `fix/case-only-rename`): `rename-repo` refused a case-only rename (`OpenActe` -> `openacte`) on a case-insensitive disk with "already exists", because `new_dir` is `old_dir`. `rename::case_only` (same inode, names equal ignoring case) lets it through. Test: `a_case_only_rename_moves_the_folder_instead_of_refusing` (macOS only). 85 unit + 2 doc tests pass, clippy and fmt clean.

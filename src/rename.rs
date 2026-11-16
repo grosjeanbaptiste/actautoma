@@ -42,12 +42,21 @@ pub struct Outcome {
     pub moved: Vec<PathBuf>,
 }
 
+/// A case-only rename on a case-insensitive disk: `new_dir` "exists" because it is `old_dir`.
+fn case_only(plan: &Plan) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let id = |p: &std::path::Path| std::fs::metadata(p).map(|m| (m.dev(), m.ino()));
+    plan.old != plan.new
+        && plan.old.eq_ignore_ascii_case(&plan.new)
+        && matches!((id(&plan.old_dir), id(&plan.new_dir())), (Ok(a), Ok(b)) if a == b)
+}
+
 pub fn check(plan: &Plan) -> Result<(), Error> {
     let fail = |m: String| Err(Error::Run(m));
     if !plan.old_dir.is_dir() {
         return fail(format!("{} is not a folder", plan.old_dir.display()));
     }
-    if plan.new_dir().exists() {
+    if plan.new_dir().exists() && !case_only(plan) {
         return fail(format!("{} already exists", plan.new_dir().display()));
     }
     for dir in plan.roots.iter().chain(&plan.children) {
@@ -153,6 +162,28 @@ mod tests {
         let text = fs::read_to_string(b.join("cfg/a.txt")).unwrap();
         assert_eq!(text, format!("{}\n me/new", b.join("src/new").display()));
         assert_eq!(out.reports[0].1.changed.len(), 1);
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    // A case-insensitive disk (macOS default): `src/new` is `src/NEW`.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_case_only_rename_moves_the_folder_instead_of_refusing() {
+        let b = scratch("case");
+        let mut p = plan(&b);
+        p.old = "Old".into();
+        p.new = "old".into();
+        let up = b.join("src/Old");
+        fs::rename(&p.old_dir, &up).unwrap();
+        p.old_dir = up;
+        p.on_platform = false;
+        let f = Fake::answering(vec![ok("git@github.com:me/Old.git"), ok("")]);
+        execute(&p, &Gh::new(&f), &&f).unwrap();
+        let names: Vec<_> = fs::read_dir(b.join("src"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["old"]);
         fs::remove_dir_all(&b).unwrap();
     }
 
