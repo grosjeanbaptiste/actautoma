@@ -31,3 +31,4 @@ tokens or personal identifiers here.
 <commands that recompute state from the repository instead of re-reading
 it, e.g. `scripts/status.py` — prefer a script whose output is a pure
 function of tracked files>
+- 2026-11-16 (branch `feat/rename-binary`): `rename-repo` also renames the Cargo binary: root `Cargo.toml` [package]/[[bin]] name, `Cargo.lock` root entry (registry dependencies untouched) and the installed `BIN_DIR/OLD` (`--bin-dir`, default `$CARGO_HOME/bin`). Refuses before any change when `BIN_DIR/NEW` exists. Not done: workspace members, cargo's `.crates2.json` record (reinstall refreshes it). 90 unit + 2 doc tests pass, clippy and fmt clean. Source: `src/binary.rs`, `src/rename.rs`.

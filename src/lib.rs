@@ -1,5 +1,6 @@
 //! actautoma — TODO: describe the crate.
 
+pub mod binary;
 pub mod forge;
 pub mod gh;
 pub mod glab;

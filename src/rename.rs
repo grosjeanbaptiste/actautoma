@@ -4,6 +4,7 @@
 //! Every check that can fail runs before the first change, so a refusal
 //! leaves the machine untouched.
 
+use crate::binary;
 use crate::forge::{Error, Forge, Runner};
 use crate::realign::{for_repo, replace, Rename};
 use crate::realign_fs::{realign_tree, rename_children, Report};
@@ -21,6 +22,8 @@ pub struct Plan {
     pub roots: Vec<PathBuf>,
     /// Folders whose children named after the encoded old folder are renamed.
     pub children: Vec<PathBuf>,
+    /// Where installed executables live (`~/.cargo/bin`); the one named `old` becomes `new`.
+    pub bin_dir: PathBuf,
     /// False when the platform already carries the new name.
     pub on_platform: bool,
 }
@@ -40,6 +43,8 @@ impl Plan {
 pub struct Outcome {
     pub reports: Vec<(PathBuf, Report)>,
     pub moved: Vec<PathBuf>,
+    /// The installed executable that was renamed, if the project had one.
+    pub binary: Option<PathBuf>,
 }
 
 pub fn check(plan: &Plan) -> Result<(), Error> {
@@ -55,7 +60,7 @@ pub fn check(plan: &Plan) -> Result<(), Error> {
             return fail(format!("{} is not a folder", dir.display()));
         }
     }
-    Ok(())
+    binary::check(&plan.bin_dir, &plan.old, &plan.new)
 }
 
 fn set_remote(runner: &impl Runner, plan: &Plan, renames: &[Rename]) -> Result<(), Error> {
@@ -79,7 +84,10 @@ pub fn execute(plan: &Plan, forge: &impl Forge, runner: &impl Runner) -> Result<
     set_remote(runner, plan, &renames)?;
     std::fs::rename(&plan.old_dir, plan.new_dir())
         .map_err(|e| Error::Run(format!("cannot move {}: {e}", plan.old_dir.display())))?;
-    let mut out = Outcome::default();
+    let mut out = Outcome {
+        binary: binary::rename_binary(&plan.new_dir(), &plan.bin_dir, &plan.old, &plan.new)?,
+        ..Outcome::default()
+    };
     for root in &plan.roots {
         out.reports
             .push((root.clone(), realign_tree(root, &renames)?));
@@ -113,6 +121,7 @@ mod tests {
             new: "new".into(),
             old_dir: old,
             home: base.to_path_buf(),
+            bin_dir: base.join("bin"),
             roots: vec![base.join("cfg")],
             children: vec![],
             on_platform: true,
@@ -153,6 +162,26 @@ mod tests {
         let text = fs::read_to_string(b.join("cfg/a.txt")).unwrap();
         assert_eq!(text, format!("{}\n me/new", b.join("src/new").display()));
         assert_eq!(out.reports[0].1.changed.len(), 1);
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn renames_the_binary_of_the_moved_project() {
+        let b = scratch("bin");
+        let p = plan(&b);
+        fs::write(p.old_dir.join("Cargo.toml"), "[package]\nname = \"old\"\n").unwrap();
+        fs::create_dir_all(&p.bin_dir).unwrap();
+        fs::write(p.bin_dir.join("old"), "elf").unwrap();
+        let f = Fake::answering(vec![
+            ok("gh 2"),
+            ok(""),
+            ok("git@github.com:me/old.git"),
+            ok(""),
+        ]);
+        let out = execute(&p, &Gh::new(&f), &&f).unwrap();
+        assert_eq!(out.binary, Some(p.bin_dir.join("new")));
+        let toml = fs::read_to_string(b.join("src/new/Cargo.toml")).unwrap();
+        assert_eq!(toml, "[package]\nname = \"new\"\n");
         fs::remove_dir_all(&b).unwrap();
     }
 
