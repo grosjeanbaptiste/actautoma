@@ -60,7 +60,7 @@ pub fn check(plan: &Plan) -> Result<(), Error> {
             return fail(format!("{} is not a folder", dir.display()));
         }
     }
-    binary::check(&plan.bin_dir, &plan.old, &plan.new)
+    binary::check(&plan.old_dir, &plan.bin_dir, &plan.old, &plan.new)
 }
 
 fn set_remote(runner: &impl Runner, plan: &Plan, renames: &[Rename]) -> Result<(), Error> {
@@ -85,7 +85,13 @@ pub fn execute(plan: &Plan, forge: &impl Forge, runner: &impl Runner) -> Result<
     std::fs::rename(&plan.old_dir, plan.new_dir())
         .map_err(|e| Error::Run(format!("cannot move {}: {e}", plan.old_dir.display())))?;
     let mut out = Outcome {
-        binary: binary::rename_binary(&plan.new_dir(), &plan.bin_dir, &plan.old, &plan.new)?,
+        binary: binary::rename_binary(
+            &plan.new_dir(),
+            &plan.bin_dir,
+            &plan.old,
+            &plan.new,
+            &renames,
+        )?,
         ..Outcome::default()
     };
     for root in &plan.roots {
