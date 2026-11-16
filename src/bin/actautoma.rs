@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 const USAGE: &str = "usage: actautoma rename-repo OWNER/OLD NEW [--dir OLD_DIR] [--root DIR]... \
-[--children DIR]... [--local-only] [--dry-run]";
+[--children DIR]... [--bin-dir DIR] [--local-only] [--dry-run]";
 
 fn fail(message: &str) -> Error {
     Error::Run(message.to_string())
@@ -29,6 +29,9 @@ fn parse(args: &[String]) -> Result<(Plan, bool), Error> {
         old: old.into(),
         new: new.clone(),
         old_dir: cwd,
+        bin_dir: std::env::var_os("CARGO_HOME")
+            .map_or_else(|| PathBuf::from(&home).join(".cargo"), PathBuf::from)
+            .join("bin"),
         home: PathBuf::from(home),
         roots: vec![],
         children: vec![],
@@ -40,6 +43,7 @@ fn parse(args: &[String]) -> Result<(Plan, bool), Error> {
         match flag.as_str() {
             "--dir" => plan.old_dir = value()?,
             "--root" => plan.roots.push(value()?),
+            "--bin-dir" => plan.bin_dir = value()?,
             "--children" => plan.children.push(value()?),
             "--local-only" => plan.on_platform = false,
             "--dry-run" => dry = true,
@@ -72,6 +76,12 @@ fn run(args: &[String]) -> Result<(), Error> {
             report.links.len(),
         );
         println!("{}: {c} rewritten, {n} not text, {l} links", root.display());
+    }
+    if let Some(bin) = &out.binary {
+        println!(
+            "renamed binary {} (run `cargo install --path` to refresh cargo's record)",
+            bin.display()
+        );
     }
     for path in &out.moved {
         println!("renamed {}", path.display());
