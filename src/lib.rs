@@ -2,6 +2,7 @@
 
 pub mod binary;
 pub mod cli;
+pub mod family;
 pub mod forge;
 pub mod gh;
 pub mod glab;

@@ -1,6 +1,7 @@
 //! `actautoma rename-repo OWNER/OLD NEW [options]` as a library entry point, so another tool
 //! (`repo`) can run it in-process; the `actautoma` binary only wraps it.
 
+use crate::family;
 use crate::forge::{Error, Forge, Runner};
 use crate::rename::{check, execute, Outcome, Plan};
 use std::io::Write;
@@ -8,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 const USAGE: &str = "usage: actautoma rename-repo OWNER/OLD NEW [--dir OLD_DIR] [--root DIR]... \
 [--children DIR]... [--bin-dir DIR] [--local-only] [--dry-run]";
+
+const FAMILY_USAGE: &str = "usage: actautoma rename-family OLD NEW [--dir DIR]";
 
 fn fail(message: &str) -> Error {
     Error::Run(message.to_string())
@@ -80,7 +83,44 @@ fn report(plan: &Plan, outcome: &Outcome, out: &mut dyn Write) -> Result<(), Err
         );
         say(out, &line)?;
     }
+    if !outcome.family.is_empty() {
+        say(
+            out,
+            &format!("renamed family {}", outcome.family.join(", ")),
+        )?;
+    }
     for path in &outcome.moved {
+        say(out, &format!("renamed {}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// `actautoma rename-family OLD NEW [--dir DIR]`: the family pass alone, for a repository
+/// whose folder already carries the new name.
+fn rename_family(args: &[String], cwd: &Path, out: &mut dyn Write) -> Result<(), Error> {
+    let [_, old, new, rest @ ..] = args else {
+        return Err(fail(FAMILY_USAGE));
+    };
+    let dir = match rest {
+        [] => cwd.to_path_buf(),
+        [flag, dir] if flag == "--dir" => PathBuf::from(dir),
+        _ => return Err(fail(FAMILY_USAGE)),
+    };
+    let mut names = family::names(&dir, old)?;
+    if names.is_empty() {
+        names.push(old.clone()); // asked by name: rewrite the leftovers of an earlier pass
+    }
+    let done = family::apply(&dir, old, new, &names)?;
+    let r = &done.report;
+    let line = format!(
+        "renamed family {}: {} rewritten, {} not text, {} links",
+        names.join(", "),
+        r.changed.len(),
+        r.not_text.len(),
+        r.links.len()
+    );
+    say(out, &line)?;
+    for path in &done.moved {
         say(out, &format!("renamed {}", path.display()))?;
     }
     Ok(())
@@ -96,6 +136,9 @@ pub fn dispatch(
     runner: &impl Runner,
     out: &mut dyn Write,
 ) -> Result<(), Error> {
+    if args.first().map(String::as_str) == Some("rename-family") {
+        return rename_family(args, cwd, out);
+    }
     let (plan, dry) = parse(args, cwd, env)?;
     if dry {
         check(&plan)?;
@@ -207,5 +250,42 @@ mod tests {
         assert!(out.starts_with("moved ") && out.contains("old ->"), "{out}");
         assert!(b.join("new").is_dir() && !b.join("old").exists());
         fs::remove_dir_all(&b).unwrap();
+    }
+    fn family_workspace(base: &Path) -> String {
+        let w = base.join("new");
+        fs::create_dir_all(w.join("pk/new-ui")).unwrap();
+        fs::write(w.join("Cargo.toml"), "[workspace]\nmembers = [\"pk/*\"]\n").unwrap();
+        fs::write(
+            w.join("pk/new-ui/Cargo.toml"),
+            "[package]\nname = \"old-ui\"\n",
+        )
+        .unwrap();
+        fs::write(w.join("pk/new-ui/lib.rs"), "use old_ui::X; // OLD_TAG\n").unwrap();
+        w.display().to_string()
+    }
+
+    #[test]
+    fn rename_family_rewrites_a_folder_that_was_already_moved() {
+        let b = scratch("family");
+        let dir = family_workspace(&b);
+        let (r, out) = run(&b, &["rename-family", "old", "new", "--dir", &dir], vec![]);
+        r.unwrap();
+        assert!(out.starts_with("renamed family old-ui: "), "{out}");
+        let lib = fs::read_to_string(b.join("new/pk/new-ui/lib.rs")).unwrap();
+        assert_eq!(lib, "use new_ui::X; // NEW_TAG\n");
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn rename_family_without_arguments_prints_its_usage() {
+        refused(&["rename-family"], "rename-family OLD NEW");
+    }
+
+    #[test]
+    fn rename_family_with_a_stray_argument_is_refused() {
+        refused(
+            &["rename-family", "old", "new", "--zap"],
+            "rename-family OLD NEW",
+        );
     }
 }

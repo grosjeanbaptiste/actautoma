@@ -63,6 +63,21 @@ fn rewrite_file(path: &Path, old: &str, new: &str, tables: &[&str]) -> Result<bo
     Ok(changed)
 }
 
+/// The `name` of the `[package]` table of a manifest, if it has one.
+pub(crate) fn package_name(manifest: &str) -> Option<String> {
+    let mut table = "";
+    for line in manifest.lines() {
+        if line.trim_start().starts_with('[') {
+            table = line.trim();
+        } else if let (true, Some((key, value))) = (table == "[package]", line.split_once('=')) {
+            if key.trim() == "name" {
+                return Some(value.trim().trim_matches('"').to_string());
+            }
+        }
+    }
+    None
+}
+
 /// The quoted strings of the `members = [...]` array of a manifest's `[workspace]`.
 fn members(manifest: &str) -> Vec<String> {
     let Some(at) = manifest.find("[workspace]") else {
@@ -83,7 +98,7 @@ fn members(manifest: &str) -> Vec<String> {
 
 /// The root manifest's folder and the folders of its workspace members. `dir/*` is
 /// expanded; any other wildcard is refused rather than skipped.
-fn project_dirs(dir: &Path) -> Result<Vec<PathBuf>, Error> {
+pub(crate) fn project_dirs(dir: &Path) -> Result<Vec<PathBuf>, Error> {
     let mut dirs = vec![dir.to_path_buf()];
     let path = dir.join("Cargo.toml");
     let text = match fs::read_to_string(&path) {

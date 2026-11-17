@@ -5,6 +5,7 @@
 //! leaves the machine untouched.
 
 use crate::binary;
+use crate::family;
 use crate::forge::{Error, Forge, Runner};
 use crate::realign::{for_repo, replace, Rename};
 use crate::realign_fs::{realign_tree, rename_children, Report};
@@ -45,6 +46,8 @@ pub struct Outcome {
     pub moved: Vec<PathBuf>,
     /// The installed executable that was renamed, if the project had one.
     pub binary: Option<PathBuf>,
+    /// The workspace members named after the repository that were renamed.
+    pub family: Vec<String>,
 }
 
 /// A case-only rename on a case-insensitive disk: `new_dir` "exists" because it is `old_dir`.
@@ -69,7 +72,8 @@ pub fn check(plan: &Plan) -> Result<(), Error> {
             return fail(format!("{} is not a folder", dir.display()));
         }
     }
-    binary::check(&plan.old_dir, &plan.bin_dir, &plan.old, &plan.new)
+    binary::check(&plan.old_dir, &plan.bin_dir, &plan.old, &plan.new)?;
+    family::check(&plan.old_dir, &plan.old, &plan.new)
 }
 
 fn set_remote(runner: &impl Runner, plan: &Plan, renames: &[Rename]) -> Result<(), Error> {
@@ -93,6 +97,7 @@ pub fn execute(plan: &Plan, forge: &impl Forge, runner: &impl Runner) -> Result<
     set_remote(runner, plan, &renames)?;
     std::fs::rename(&plan.old_dir, plan.new_dir())
         .map_err(|e| Error::Run(format!("cannot move {}: {e}", plan.old_dir.display())))?;
+    let family = family::names(&plan.new_dir(), &plan.old)?;
     let mut out = Outcome {
         binary: binary::rename_binary(
             &plan.new_dir(),
@@ -103,6 +108,9 @@ pub fn execute(plan: &Plan, forge: &impl Forge, runner: &impl Runner) -> Result<
         )?,
         ..Outcome::default()
     };
+    let done = family::apply(&plan.new_dir(), &plan.old, &plan.new, &family)?;
+    out.moved.extend(done.moved);
+    out.family = family;
     for root in &plan.roots {
         out.reports
             .push((root.clone(), realign_tree(root, &renames)?));
@@ -199,6 +207,66 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(names, ["old"]);
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn renames_the_workspace_members_named_after_the_repository() {
+        let b = scratch("family");
+        let p = plan(&b);
+        fs::write(
+            p.old_dir.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"pk/*\"]\n",
+        )
+        .unwrap();
+        for (dir, name) in [("pk/old", "old"), ("pk/old-ui", "old-ui")] {
+            fs::create_dir_all(p.old_dir.join(dir)).unwrap();
+            let toml = format!("[package]\nname = \"{name}\"\n");
+            fs::write(p.old_dir.join(dir).join("Cargo.toml"), toml).unwrap();
+        }
+        fs::write(p.old_dir.join("pk/old/lib.rs"), "use old_ui::X;\n").unwrap();
+        let f = Fake::answering(vec![
+            ok("gh 2"),
+            ok(""),
+            ok("git@github.com:me/old.git"),
+            ok(""),
+        ]);
+        let out = execute(&p, &Gh::new(&f), &&f).unwrap();
+        assert_eq!(out.family, ["old", "old-ui"]);
+        let n = b.join("src/new/pk");
+        assert!(n.join("new/Cargo.toml").is_file() && n.join("new-ui/Cargo.toml").is_file());
+        assert_eq!(
+            fs::read_to_string(n.join("new/lib.rs")).unwrap(),
+            "use new_ui::X;\n"
+        );
+        assert_eq!(
+            fs::read_to_string(n.join("new-ui/Cargo.toml")).unwrap(),
+            "[package]\nname = \"new-ui\"\n"
+        );
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn a_member_folder_clash_is_refused_before_the_platform_is_touched() {
+        let b = scratch("famclash");
+        let p = plan(&b);
+        fs::write(
+            p.old_dir.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"pk/*\"]\n",
+        )
+        .unwrap();
+        fs::create_dir_all(p.old_dir.join("pk/old-ui")).unwrap();
+        fs::write(
+            p.old_dir.join("pk/old-ui/Cargo.toml"),
+            "[package]\nname = \"old-ui\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(p.old_dir.join("pk/new-ui")).unwrap();
+        let f = Fake::answering(vec![]);
+        let err = execute(&p, &Gh::new(&f), &&f).unwrap_err();
+        assert!(err.to_string().contains("new-ui"), "{err}");
+        assert_eq!(f.calls_len(), 0);
+        assert!(b.join("src/old").is_dir());
         fs::remove_dir_all(&b).unwrap();
     }
 

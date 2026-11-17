@@ -74,17 +74,34 @@ fn continues(rest: &str) -> bool {
 
 /// `text` with every whole-name match rewritten, and how many there were.
 pub fn replace(text: &str, renames: &[Rename]) -> (String, usize) {
+    rewrite(text, renames, |prev, rest| {
+        !prev.is_some_and(is_name) && !continues(rest)
+    })
+}
+
+/// Like [`replace`], but a match only has to stand apart from letters and digits:
+/// `old-x`, `old_x` and `OLD_TAG` are rewritten, `older` and `xold` are not.
+pub fn replace_words(text: &str, renames: &[Rename]) -> (String, usize) {
+    rewrite(text, renames, |prev, rest| {
+        !prev.is_some_and(char::is_alphanumeric)
+            && !rest.chars().next().is_some_and(char::is_alphanumeric)
+    })
+}
+
+fn rewrite(
+    text: &str,
+    renames: &[Rename],
+    standalone: impl Fn(Option<char>, &str) -> bool,
+) -> (String, usize) {
     let mut ordered: Vec<&Rename> = renames.iter().filter(|r| !r.from.is_empty()).collect();
     ordered.sort_by_key(|r| std::cmp::Reverse(r.from.len()));
     let mut out = String::with_capacity(text.len());
     let (mut count, mut i, mut prev) = (0, 0, None::<char>);
     while i < text.len() {
         let rest = &text[i..];
-        let hit = ordered.iter().find(|r| {
-            rest.starts_with(&r.from)
-                && !prev.is_some_and(is_name)
-                && !continues(&rest[r.from.len()..])
-        });
+        let hit = ordered
+            .iter()
+            .find(|r| rest.starts_with(&r.from) && standalone(prev, &rest[r.from.len()..]));
         if let Some(r) = hit {
             out.push_str(&r.to);
             i += r.from.len();
@@ -222,5 +239,12 @@ mod tests {
     #[test]
     fn an_empty_from_is_ignored() {
         assert_eq!(replace("abc", &[rename("", "x")]).0, "abc");
+    }
+    #[test]
+    fn replace_words_crosses_dashes_and_underscores_but_not_letters() {
+        let r = [rename("old", "new"), rename("OLD", "NEW")];
+        let (out, n) = replace_words("old_x old-ish older OLD_TAG (old) xold", &r);
+        assert_eq!(out, "new_x new-ish older NEW_TAG (new) xold");
+        assert_eq!(n, 4);
     }
 }
