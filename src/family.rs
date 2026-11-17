@@ -7,8 +7,9 @@
 
 use crate::binary::{package_name, project_dirs};
 use crate::forge::Error;
+use crate::realign::replace_words;
 use crate::realign::Rename;
-use crate::realign_fs::{realign_tree, rename_children, Report};
+use crate::realign_fs::{realign_tree_with, rename_children, Report};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -86,7 +87,7 @@ pub fn apply(dir: &Path, old: &str, new: &str, names: &[String]) -> Result<Done,
     for parent in &parents {
         refuse_clashes(parent, &folders)?;
     }
-    let report = realign_tree(dir, &all)?;
+    let report = realign_tree_with(dir, &all, replace_words)?;
     let mut moved = Vec::new();
     for parent in &parents {
         moved.extend(rename_children(parent, &folders)?);
@@ -159,7 +160,7 @@ mod tests {
         member(&w, "packages/older", "older", "");
         fs::write(
             w.join("packages/old/lib.rs"),
-            "use old::widgets;\nuse old_widgets::Shell;\n// Old and OLD, not older or old-ish\n",
+            "use old::widgets;\nuse old_widgets::Shell;\n// Old and OLD_TAG, old-store-{}, not older\n",
         )
         .unwrap();
         w
@@ -241,7 +242,7 @@ mod tests {
         let lib = fs::read_to_string(w.join("packages/new/lib.rs")).unwrap();
         assert_eq!(
             lib,
-            "use new::widgets;\nuse new_widgets::Shell;\n// New and NEW, not older or old-ish\n"
+            "use new::widgets;\nuse new_widgets::Shell;\n// New and NEW_TAG, new-store-{}, not older\n"
         );
         let toml = fs::read_to_string(w.join("packages/new/Cargo.toml")).unwrap();
         assert_eq!(

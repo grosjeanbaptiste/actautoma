@@ -5,6 +5,9 @@
 
 use crate::forge::Error;
 use crate::realign::{replace, Rename};
+
+/// How a text is rewritten: [`replace`] or [`crate::realign::replace_words`].
+pub type Replacer = fn(&str, &[Rename]) -> (String, usize);
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -36,7 +39,7 @@ fn io(path: &Path, what: &str, e: &std::io::Error) -> Error {
     Error::Run(format!("{what} {}: {e}", path.display()))
 }
 
-fn visit(dir: &Path, renames: &[Rename], report: &mut Report) -> Result<(), Error> {
+fn visit(dir: &Path, renames: &[Rename], with: Replacer, report: &mut Report) -> Result<(), Error> {
     let entries = fs::read_dir(dir).map_err(|e| io(dir, "cannot read", &e))?;
     for entry in entries {
         let path = entry.map_err(|e| io(dir, "cannot list", &e))?.path();
@@ -49,23 +52,28 @@ fn visit(dir: &Path, renames: &[Rename], report: &mut Report) -> Result<(), Erro
                 .and_then(|n| n.to_str())
                 .unwrap_or_default();
             if !SKIPPED_DIRS.contains(&name) {
-                visit(&path, renames, report)?;
+                visit(&path, renames, with, report)?;
             }
         } else {
-            rewrite(&path, renames, report)?;
+            rewrite(&path, renames, with, report)?;
         }
     }
     Ok(())
 }
 
-fn rewrite(path: &Path, renames: &[Rename], report: &mut Report) -> Result<(), Error> {
+fn rewrite(
+    path: &Path,
+    renames: &[Rename],
+    with: Replacer,
+    report: &mut Report,
+) -> Result<(), Error> {
     let Ok(text) = fs::read_to_string(path) else {
         // Not UTF-8 (or unreadable): a read error must not look like "no text".
         fs::File::open(path).map_err(|e| io(path, "cannot read", &e))?;
         report.not_text.push(path.to_path_buf());
         return Ok(());
     };
-    let (out, count) = replace(&text, renames);
+    let (out, count) = with(&text, renames);
     if count > 0 {
         fs::write(path, out).map_err(|e| io(path, "cannot write", &e))?;
         report.changed.push(path.to_path_buf());
@@ -75,8 +83,13 @@ fn rewrite(path: &Path, renames: &[Rename], report: &mut Report) -> Result<(), E
 
 /// Rewrite every text file under `root`; `root` itself must be a directory.
 pub fn realign_tree(root: &Path, renames: &[Rename]) -> Result<Report, Error> {
+    realign_tree_with(root, renames, replace)
+}
+
+/// [`realign_tree`] with a chosen way of rewriting each text.
+pub fn realign_tree_with(root: &Path, renames: &[Rename], with: Replacer) -> Result<Report, Error> {
     let mut report = Report::default();
-    visit(root, renames, &mut report)?;
+    visit(root, renames, with, &mut report)?;
     report.changed.sort();
     Ok(report)
 }

@@ -67,7 +67,10 @@ fn rename_family(args: &[String]) -> Result<(), Error> {
         [flag, dir] if flag == "--dir" => PathBuf::from(dir),
         _ => return Err(fail(FAMILY_USAGE)),
     };
-    let names = family::names(&dir, old)?;
+    let mut names = family::names(&dir, old)?;
+    if names.is_empty() {
+        names.push(old.clone()); // asked by name: rewrite the leftovers of an earlier pass
+    }
     let done = family::apply(&dir, old, new, &names)?;
     println!(
         "renamed family {}: {} rewritten, {} not text, {} links",
