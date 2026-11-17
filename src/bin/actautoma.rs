@@ -1,5 +1,6 @@
 //! `actautoma rename-repo OWNER/OLD NEW [options]`: see `actautoma::rename`.
 
+use actautoma::family;
 use actautoma::forge::Error;
 use actautoma::gh::Gh;
 use actautoma::process::ProcessRunner;
@@ -9,6 +10,8 @@ use std::process::ExitCode;
 
 const USAGE: &str = "usage: actautoma rename-repo OWNER/OLD NEW [--dir OLD_DIR] [--root DIR]... \
 [--children DIR]... [--bin-dir DIR] [--local-only] [--dry-run]";
+
+const FAMILY_USAGE: &str = "usage: actautoma rename-family OLD NEW [--dir DIR]";
 
 fn fail(message: &str) -> Error {
     Error::Run(message.to_string())
@@ -53,7 +56,36 @@ fn parse(args: &[String]) -> Result<(Plan, bool), Error> {
     Ok((plan, dry))
 }
 
+/// `actautoma rename-family OLD NEW [--dir DIR]`: the family pass alone, for a repository
+/// whose folder already carries the new name.
+fn rename_family(args: &[String]) -> Result<(), Error> {
+    let [_, old, new, rest @ ..] = args else {
+        return Err(fail(FAMILY_USAGE));
+    };
+    let dir = match rest {
+        [] => std::env::current_dir().map_err(|e| fail(&format!("no current folder: {e}")))?,
+        [flag, dir] if flag == "--dir" => PathBuf::from(dir),
+        _ => return Err(fail(FAMILY_USAGE)),
+    };
+    let names = family::names(&dir, old)?;
+    let done = family::apply(&dir, old, new, &names)?;
+    println!(
+        "renamed family {}: {} rewritten, {} not text, {} links",
+        names.join(", "),
+        done.report.changed.len(),
+        done.report.not_text.len(),
+        done.report.links.len()
+    );
+    for path in &done.moved {
+        println!("renamed {}", path.display());
+    }
+    Ok(())
+}
+
 fn run(args: &[String]) -> Result<(), Error> {
+    if args.first().map(String::as_str) == Some("rename-family") {
+        return rename_family(args);
+    }
     let (plan, dry) = parse(args)?;
     if dry {
         check(&plan)?;
@@ -82,6 +114,9 @@ fn run(args: &[String]) -> Result<(), Error> {
             "renamed binary {} (run `cargo install --path` to refresh cargo's record)",
             bin.display()
         );
+    }
+    if !out.family.is_empty() {
+        println!("renamed family {}", out.family.join(", "));
     }
     for path in &out.moved {
         println!("renamed {}", path.display());
