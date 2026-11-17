@@ -141,7 +141,7 @@ mod tests {
         fs::write(root.join(dir).join("Cargo.toml"), manifest).unwrap();
     }
 
-    /// A workspace shaped like bioxus: a facade `old`, members `old-*`, one stranger.
+    /// A workspace shaped like biorcrux: a facade `old`, members `old-*`, one stranger.
     fn workspace(b: &Path) -> PathBuf {
         let w = b.join("old");
         fs::create_dir_all(&w).unwrap();
