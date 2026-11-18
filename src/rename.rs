@@ -27,11 +27,16 @@ pub struct Plan {
     pub bin_dir: PathBuf,
     /// False when the platform already carries the new name.
     pub on_platform: bool,
+    /// Parent folder of the target; `None` keeps the folder next to `old_dir`.
+    pub into: Option<PathBuf>,
 }
 
 impl Plan {
     pub fn new_dir(&self) -> PathBuf {
-        self.old_dir.with_file_name(&self.new)
+        match &self.into {
+            Some(parent) => parent.join(&self.new),
+            None => self.old_dir.with_file_name(&self.new),
+        }
     }
     pub fn renames(&self) -> Vec<Rename> {
         let (o, n) = (&self.old_dir, self.new_dir());
@@ -63,6 +68,9 @@ pub fn check(plan: &Plan) -> Result<(), Error> {
     let fail = |m: String| Err(Error::Run(m));
     if !plan.old_dir.is_dir() {
         return fail(format!("{} is not a folder", plan.old_dir.display()));
+    }
+    if let Some(parent) = plan.into.as_ref().filter(|p| !p.is_dir()) {
+        return fail(format!("{} is not a folder", parent.display()));
     }
     if plan.new_dir().exists() && !case_only(plan) {
         return fail(format!("{} already exists", plan.new_dir().display()));
@@ -148,6 +156,7 @@ mod tests {
             roots: vec![base.join("cfg")],
             children: vec![],
             on_platform: true,
+            into: None,
         }
     }
 
@@ -207,6 +216,36 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(names, ["old"]);
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn into_moves_the_renamed_folder_under_another_parent() {
+        let b = scratch("into");
+        let mut p = plan(&b);
+        fs::create_dir_all(b.join("elsewhere")).unwrap();
+        p.into = Some(b.join("elsewhere"));
+        p.roots = vec![];
+        let f = Fake::answering(vec![
+            ok("gh 2"),
+            ok(""),
+            ok("git@github.com:me/old.git"),
+            ok(""),
+        ]);
+        execute(&p, &Gh::new(&f), &&f).unwrap();
+        assert!(b.join("elsewhere/new").is_dir() && !b.join("src/old").exists());
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn into_a_missing_parent_is_refused_before_anything_changes() {
+        let b = scratch("intomissing");
+        let mut p = plan(&b);
+        p.into = Some(b.join("nowhere"));
+        let f = Fake::answering(vec![]);
+        let err = execute(&p, &Gh::new(&f), &&f).unwrap_err();
+        assert!(err.to_string().contains("not a folder"), "{err}");
+        assert!(b.join("src/old").is_dir());
         fs::remove_dir_all(&b).unwrap();
     }
 
