@@ -94,6 +94,25 @@ fn set_remote(runner: &impl Runner, plan: &Plan, renames: &[Rename]) -> Result<(
     Ok(())
 }
 
+/// The linked worktrees of `dir` (the main one excluded): their `.git` files point at `dir`.
+fn linked_worktrees(runner: &impl Runner, dir: &std::path::Path) -> Result<Vec<PathBuf>, Error> {
+    let raw = runner.run("git", &["worktree", "list", "--porcelain"], Some(dir))?;
+    Ok(raw
+        .lines()
+        .filter_map(|l| l.strip_prefix("worktree "))
+        .skip(1)
+        .map(PathBuf::from)
+        .collect())
+}
+
+/// Re-links each worktree to the moved repository; a worktree whose folder is gone is skipped.
+fn repair_worktrees(runner: &impl Runner, worktrees: &[PathBuf]) -> Result<(), Error> {
+    for wt in worktrees.iter().filter(|w| w.is_dir()) {
+        runner.run("git", &["worktree", "repair"], Some(wt))?;
+    }
+    Ok(())
+}
+
 /// Do the rename. `forge` renames on the platform, `runner` runs `git`.
 pub fn execute(plan: &Plan, forge: &impl Forge, runner: &impl Runner) -> Result<Outcome, Error> {
     check(plan)?;
@@ -103,8 +122,10 @@ pub fn execute(plan: &Plan, forge: &impl Forge, runner: &impl Runner) -> Result<
         forge.rename_repo(&format!("{}/{}", plan.owner, plan.old), &plan.new)?;
     }
     set_remote(runner, plan, &renames)?;
+    let worktrees = linked_worktrees(runner, &plan.old_dir)?;
     std::fs::rename(&plan.old_dir, plan.new_dir())
         .map_err(|e| Error::Run(format!("cannot move {}: {e}", plan.old_dir.display())))?;
+    repair_worktrees(runner, &worktrees)?;
     let family = family::names(&plan.new_dir(), &plan.old)?;
     let mut out = Outcome {
         binary: binary::rename_binary(
@@ -180,6 +201,7 @@ mod tests {
             ok(""),
             ok("git@github.com:me/old.git\n"),
             ok(""),
+            ok(""), // worktree list
         ]);
         let out = execute(&p, &Gh::new(&f), &&f).unwrap();
         assert_eq!(
@@ -209,13 +231,42 @@ mod tests {
         fs::rename(&p.old_dir, &up).unwrap();
         p.old_dir = up;
         p.on_platform = false;
-        let f = Fake::answering(vec![ok("git@github.com:me/Old.git"), ok("")]);
+        let f = Fake::answering(vec![ok("git@github.com:me/Old.git"), ok(""), ok("")]);
         execute(&p, &Gh::new(&f), &&f).unwrap();
         let names: Vec<_> = fs::read_dir(b.join("src"))
             .unwrap()
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(names, ["old"]);
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn linked_worktrees_are_repaired_after_the_move() {
+        let b = scratch("wt");
+        let p = plan(&b);
+        let wt = b.join("old-wt-x");
+        fs::create_dir_all(&wt).unwrap();
+        let listing = format!(
+            "worktree {}\nHEAD abc\nbranch refs/heads/main\n\nworktree {}\nHEAD abc\n",
+            p.old_dir.display(),
+            wt.display()
+        );
+        let f = Fake::answering(vec![
+            ok("gh 2"),
+            ok(""),
+            ok("git@github.com:me/old.git"),
+            ok(""),
+            ok(&listing),
+            ok(""),
+        ]);
+        execute(&p, &Gh::new(&f), &&f).unwrap();
+        let (prog, args, dir) = f.call(5);
+        assert_eq!(
+            (prog.as_str(), args),
+            ("git", vec!["worktree".into(), "repair".into()])
+        );
+        assert_eq!(dir, Some(wt));
         fs::remove_dir_all(&b).unwrap();
     }
 
@@ -231,6 +282,7 @@ mod tests {
             ok(""),
             ok("git@github.com:me/old.git"),
             ok(""),
+            ok(""), // worktree list
         ]);
         execute(&p, &Gh::new(&f), &&f).unwrap();
         assert!(b.join("elsewhere/new").is_dir() && !b.join("src/old").exists());
@@ -269,6 +321,7 @@ mod tests {
             ok(""),
             ok("git@github.com:me/old.git"),
             ok(""),
+            ok(""), // worktree list
         ]);
         let out = execute(&p, &Gh::new(&f), &&f).unwrap();
         assert_eq!(out.family, ["old", "old-ui"]);
@@ -321,6 +374,7 @@ mod tests {
             ok(""),
             ok("git@github.com:me/old.git"),
             ok(""),
+            ok(""), // worktree list
         ]);
         let out = execute(&p, &Gh::new(&f), &&f).unwrap();
         assert_eq!(out.binary, Some(p.bin_dir.join("new")));
@@ -336,7 +390,7 @@ mod tests {
         p.on_platform = false;
         let f = Fake::answering(vec![ok("git@github.com:me/new.git"), ok("")]);
         execute(&p, &Gh::new(&f), &&f).unwrap();
-        assert_eq!(f.calls_len(), 1); // the remote already says `new`: only `get-url` ran
+        assert_eq!(f.calls_len(), 2); // the remote already says `new`: only `get-url` and the worktree list ran
         assert!(b.join("src/new").is_dir());
         fs::remove_dir_all(&b).unwrap();
     }

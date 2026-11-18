@@ -242,6 +242,7 @@ mod tests {
             Ok(String::new()),
             Ok("git@github.com:me/old.git".into()),
             Ok(String::new()),
+            Ok(String::new()), // worktree list
         ];
         let (r, out) = run(
             &b,
