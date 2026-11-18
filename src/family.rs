@@ -55,6 +55,7 @@ pub fn renames(names: &[String], old: &str, new: &str) -> Vec<Rename> {
         let to = format!("{new}{}", &name[old.len()..]);
         forms.push((name.clone(), to.clone()));
         forms.push((name.replace('-', "_"), to.replace('-', "_")));
+        forms.push((name.replace('-', ""), to.replace('-', ""))); // `app.oldwidgets` identifiers
     }
     forms.push((old.to_string(), new.to_string())); // the facade may already be renamed
     forms.push((titled(old), titled(new)));
@@ -203,6 +204,7 @@ mod tests {
                 ("old", "new"),
                 ("old-widgets", "new-widgets"),
                 ("old_widgets", "new_widgets"),
+                ("oldwidgets", "newwidgets"),
                 ("Old", "New"),
                 ("OLD", "NEW"),
             ]
@@ -217,11 +219,28 @@ mod tests {
             [
                 ("old-widgets", "new-widgets"),
                 ("old_widgets", "new_widgets"),
+                ("oldwidgets", "newwidgets"),
                 ("old", "new"),
                 ("Old", "New"),
                 ("OLD", "NEW"),
             ]
         );
+    }
+
+    #[test]
+    fn a_hyphenless_identifier_is_rewritten_but_not_inside_a_longer_word() {
+        let b = scratch("joined");
+        let w = workspace(&b);
+        fs::write(
+            w.join("packages/old/id.toml"),
+            "id = \"app.oldwidgets\"\nx = \"oldwidgetsx\"\n",
+        )
+        .unwrap();
+        let n = names(&w, "old").unwrap();
+        apply(&w, "old", "new", &n).unwrap();
+        let id = fs::read_to_string(w.join("packages/new/id.toml")).unwrap();
+        assert_eq!(id, "id = \"app.newwidgets\"\nx = \"oldwidgetsx\"\n");
+        fs::remove_dir_all(&b).unwrap();
     }
 
     #[test]
