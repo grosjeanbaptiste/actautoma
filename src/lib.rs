@@ -10,6 +10,7 @@ pub mod install_records;
 pub mod process;
 pub mod realign;
 pub mod realign_fs;
+pub mod registry;
 pub mod rename;
 
 #[cfg(test)]

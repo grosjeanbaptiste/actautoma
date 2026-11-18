@@ -9,6 +9,7 @@ use crate::family;
 use crate::forge::{Error, Forge, Runner};
 use crate::realign::{for_repo, replace, Rename};
 use crate::realign_fs::{realign_tree, rename_children, Report};
+use crate::registry::{rename_entry, Registry};
 use std::path::PathBuf;
 
 /// What to rename and where the references live.
@@ -27,6 +28,8 @@ pub struct Plan {
     pub bin_dir: PathBuf,
     /// False when the platform already carries the new name.
     pub on_platform: bool,
+    /// The registry (`name|path` lines) whose entry at the moved folder takes the new name.
+    pub registry: Option<PathBuf>,
 }
 
 impl Plan {
@@ -48,6 +51,8 @@ pub struct Outcome {
     pub binary: Option<PathBuf>,
     /// The workspace members named after the repository that were renamed.
     pub family: Vec<String>,
+    /// What the registry pass found, when a registry was given.
+    pub registry: Option<Registry>,
 }
 
 /// A case-only rename on a case-insensitive disk: `new_dir` "exists" because it is `old_dir`.
@@ -71,6 +76,13 @@ pub fn check(plan: &Plan) -> Result<(), Error> {
         if !dir.is_dir() && dir != &plan.new_dir() {
             return fail(format!("{} is not a folder", dir.display()));
         }
+    }
+    if plan
+        .registry
+        .as_ref()
+        .is_some_and(|f| f.exists() && !f.is_file())
+    {
+        return fail("the registry is not a file".to_string());
     }
     binary::check(&plan.old_dir, &plan.bin_dir, &plan.old, &plan.new)?;
     family::check(&plan.old_dir, &plan.old, &plan.new)
@@ -118,6 +130,9 @@ pub fn execute(plan: &Plan, forge: &impl Forge, runner: &impl Runner) -> Result<
     for dir in &plan.children {
         out.moved.extend(rename_children(dir, &renames)?);
     }
+    if let Some(file) = &plan.registry {
+        out.registry = Some(rename_entry(file, &plan.new_dir(), &plan.new)?);
+    }
     Ok(out)
 }
 
@@ -148,6 +163,7 @@ mod tests {
             roots: vec![base.join("cfg")],
             children: vec![],
             on_platform: true,
+            registry: None,
         }
     }
 
