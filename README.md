@@ -30,6 +30,14 @@ encoded old folder. When the moved project's root `Cargo.toml` names its package
 platform (it already has the new name); `--dry-run` prints the rewrites and changes nothing.
 On this machine, `dotfiles project rename OWNER/OLD NEW` supplies the roots.
 
+### Renaming a file
+
+```text
+actautoma rename-file OLD NEW [--root DIR]... [--replace FROM TO]... [--dry-run]
+```
+
+Moves one tracked file with `git mv` (run in its folder; the target must not exist and its folder must), then rewrites, under each `--root`, the old file name and the old full path by whole name, and every `--replace FROM TO` pair (for example `ADR-042` to `ADR-043` when an ADR is renumbered). A failing `git mv` stops before any rewrite. `--dry-run` prints the rewrites and changes nothing.
+
 ### Library
 
 ```rust,no_run
