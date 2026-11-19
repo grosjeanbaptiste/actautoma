@@ -20,7 +20,7 @@ From a checkout: `cargo test` builds and checks it.
 ### Command line
 
 ```text
-actautoma rename-repo OWNER/OLD NEW [--dir OLD_DIR] [--root DIR]... [--children DIR]... [--registry FILE] [--bin-dir DIR] [--local-only] [--dry-run]
+actautoma rename-repo OWNER/OLD NEW [--dir OLD_DIR] [--root DIR]... [--children DIR]... [--registry FILE] [--bin-dir DIR] [--into DIR] [--local-only] [--dry-run]
 ```
 
 Renames `OWNER/OLD` to `NEW` on GitHub (`gh`), repoints the local `origin`, moves `OLD_DIR`

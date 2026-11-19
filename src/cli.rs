@@ -9,7 +9,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const USAGE: &str = "usage: actautoma rename-repo OWNER/OLD NEW [--dir OLD_DIR] [--root DIR]... \
-[--children DIR]... [--registry FILE] [--bin-dir DIR] [--local-only] [--dry-run]";
+[--children DIR]... [--registry FILE] [--bin-dir DIR] [--into DIR] [--local-only] [--dry-run]";
 
 const FAMILY_USAGE: &str = "usage: actautoma rename-family OLD NEW [--dir DIR]";
 
@@ -47,6 +47,7 @@ fn parse(
         children: vec![],
         on_platform: true,
         registry: None,
+        into: None,
     };
     let (mut dry, mut it) = (false, rest.iter());
     while let Some(flag) = it.next() {
@@ -57,6 +58,7 @@ fn parse(
             "--bin-dir" => plan.bin_dir = value()?,
             "--registry" => plan.registry = Some(value()?),
             "--children" => plan.children.push(value()?),
+            "--into" => plan.into = Some(value()?),
             "--local-only" => plan.on_platform = false,
             "--dry-run" => dry = true,
             other => return Err(fail(&format!("unknown option {other}\n{USAGE}"))),
@@ -254,6 +256,7 @@ mod tests {
             Ok(String::new()),
             Ok("git@github.com:me/old.git".into()),
             Ok(String::new()),
+            Ok(String::new()), // worktree list
         ];
         let (r, out) = run(
             &b,
@@ -277,6 +280,7 @@ mod tests {
             Ok(String::new()),
             Ok("git@github.com:me/old.git".into()),
             Ok(String::new()),
+            Ok(String::new()), // worktree list
         ];
         let (dir, file) = (
             b.join("old").display().to_string(),
