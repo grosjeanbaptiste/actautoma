@@ -3,12 +3,13 @@
 
 use crate::family;
 use crate::forge::{Error, Forge, Runner};
+use crate::registry::Registry;
 use crate::rename::{check, execute, Outcome, Plan};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const USAGE: &str = "usage: actautoma rename-repo OWNER/OLD NEW [--dir OLD_DIR] [--root DIR]... \
-[--children DIR]... [--bin-dir DIR] [--into DIR] [--local-only] [--dry-run]";
+[--children DIR]... [--registry FILE] [--bin-dir DIR] [--into DIR] [--local-only] [--dry-run]";
 
 const FAMILY_USAGE: &str = "usage: actautoma rename-family OLD NEW [--dir DIR]";
 
@@ -45,6 +46,7 @@ fn parse(
         roots: vec![],
         children: vec![],
         on_platform: true,
+        registry: None,
         into: None,
     };
     let (mut dry, mut it) = (false, rest.iter());
@@ -54,6 +56,7 @@ fn parse(
             "--dir" => plan.old_dir = value()?,
             "--root" => plan.roots.push(value()?),
             "--bin-dir" => plan.bin_dir = value()?,
+            "--registry" => plan.registry = Some(value()?),
             "--children" => plan.children.push(value()?),
             "--into" => plan.into = Some(value()?),
             "--local-only" => plan.on_platform = false,
@@ -62,6 +65,14 @@ fn parse(
         }
     }
     Ok((plan, dry))
+}
+
+fn registry_line(found: &Registry) -> String {
+    match found {
+        Registry::Missing => "registry: no file, nothing renamed".into(),
+        Registry::Unlisted => "registry: no entry at the moved folder, nothing renamed".into(),
+        Registry::Renamed(n) => format!("registry: {n} entry renamed"),
+    }
 }
 
 fn report(plan: &Plan, outcome: &Outcome, out: &mut dyn Write) -> Result<(), Error> {
@@ -90,6 +101,9 @@ fn report(plan: &Plan, outcome: &Outcome, out: &mut dyn Write) -> Result<(), Err
             out,
             &format!("renamed family {}", outcome.family.join(", ")),
         )?;
+    }
+    if let Some(found) = &outcome.registry {
+        say(out, &registry_line(found))?;
     }
     for path in &outcome.moved {
         say(out, &format!("renamed {}", path.display()))?;
@@ -254,6 +268,74 @@ mod tests {
         assert!(b.join("new").is_dir() && !b.join("old").exists());
         fs::remove_dir_all(&b).unwrap();
     }
+    #[test]
+    fn a_registry_entry_at_the_moved_folder_takes_the_new_name() {
+        let b = scratch("registry");
+        fs::create_dir_all(b.join("old")).unwrap();
+        let reg = b.join("projects.txt");
+        let entry = format!("old|{}\nz|/z\n", b.join("new").display());
+        fs::write(&reg, &entry).unwrap();
+        let answers = vec![
+            Ok("gh 2".into()),
+            Ok(String::new()),
+            Ok("git@github.com:me/old.git".into()),
+            Ok(String::new()),
+            Ok(String::new()), // worktree list
+        ];
+        let (dir, file) = (
+            b.join("old").display().to_string(),
+            reg.display().to_string(),
+        );
+        let args = [
+            "rename-repo",
+            "me/old",
+            "new",
+            "--dir",
+            &dir,
+            "--registry",
+            &file,
+        ];
+        let (r, out) = run(&b, &args, answers);
+        r.unwrap();
+        assert!(out.contains("registry: 1 entry renamed"), "{out}");
+        let text = fs::read_to_string(&reg).unwrap();
+        assert_eq!(text, format!("new|{}\nz|/z\n", b.join("new").display()));
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn a_registry_that_is_not_a_file_refuses_before_any_change() {
+        let b = scratch("registry-dir");
+        fs::create_dir_all(b.join("old")).unwrap();
+        let (dir, file) = (b.join("old").display().to_string(), b.display().to_string());
+        let args = [
+            "rename-repo",
+            "me/old",
+            "new",
+            "--dir",
+            &dir,
+            "--registry",
+            &file,
+        ];
+        let (r, _) = run(&b, &args, vec![]);
+        match r {
+            Err(Error::Run(m)) => assert!(m.contains("registry is not a file"), "{m}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(b.join("old").is_dir() && !b.join("new").exists());
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn registry_findings_are_worded_distinctly() {
+        assert!(registry_line(&Registry::Missing).contains("no file"));
+        assert!(registry_line(&Registry::Unlisted).contains("no entry"));
+        assert_eq!(
+            registry_line(&Registry::Renamed(2)),
+            "registry: 2 entry renamed"
+        );
+    }
+
     fn family_workspace(base: &Path) -> String {
         let w = base.join("new");
         fs::create_dir_all(w.join("pk/new-ui")).unwrap();

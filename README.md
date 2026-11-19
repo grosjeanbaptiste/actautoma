@@ -20,13 +20,13 @@ From a checkout: `cargo test` builds and checks it.
 ### Command line
 
 ```text
-actautoma rename-repo OWNER/OLD NEW [--dir OLD_DIR] [--root DIR]... [--children DIR]... [--bin-dir DIR] [--into DIR] [--local-only] [--dry-run]
+actautoma rename-repo OWNER/OLD NEW [--dir OLD_DIR] [--root DIR]... [--children DIR]... [--registry FILE] [--bin-dir DIR] [--into DIR] [--local-only] [--dry-run]
 ```
 
 Renames `OWNER/OLD` to `NEW` on GitHub (`gh`), repoints the local `origin`, moves `OLD_DIR`
 (default: the current folder) to its sibling `NEW`, rewrites the old name in the text files
 under each `--root` and renames the children of each `--children` folder named after the
-encoded old folder. When the moved project's root `Cargo.toml` names its package (or `[[bin]]`) `OLD`, that name, the `Cargo.lock` root entry and the installed executable `BIN_DIR/OLD` (default `$CARGO_HOME/bin`) become `NEW`; cargo's install records (`.crates.toml`, `.crates2.json`) follow. Workspace members (`dir/*` or literal paths) are renamed too; another wildcard is refused up front. Every check runs before the first change. `--local-only` skips the
+encoded old folder. When the moved project's root `Cargo.toml` names its package (or `[[bin]]`) `OLD`, that name, the `Cargo.lock` root entry and the installed executable `BIN_DIR/OLD` (default `$CARGO_HOME/bin`) become `NEW`; cargo's install records (`.crates.toml`, `.crates2.json`) follow. Workspace members (`dir/*` or literal paths) are renamed too; another wildcard is refused up front. `--registry FILE` (`name|path` lines, e.g. `projects.txt`) gives the entry at the moved folder the new name; a missing file or an unlisted folder is reported, never skipped quietly. Every check runs before the first change. `--local-only` skips the
 platform (it already has the new name); `--dry-run` prints the rewrites and changes nothing.
 On this machine, `dotfiles project rename OWNER/OLD NEW` supplies the roots.
 
