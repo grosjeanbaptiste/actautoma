@@ -12,6 +12,7 @@ pub mod realign;
 pub mod realign_fs;
 pub mod registry;
 pub mod rename;
+pub mod rename_file;
 
 #[cfg(test)]
 mod testing;
