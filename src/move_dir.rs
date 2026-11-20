@@ -51,6 +51,8 @@ pub struct Outcome {
     pub reports: Vec<(PathBuf, Report)>,
     pub files: Vec<PathBuf>,
     pub moved: Vec<PathBuf>,
+    /// Repositories around the folder that git could not read (a stale worktree), with why.
+    pub skipped: Vec<(PathBuf, String)>,
     /// The new parent is a repository and now ignores the moved folder.
     pub ignored: bool,
 }
@@ -427,7 +429,14 @@ pub fn execute(plan: &Plan, runner: &impl Runner) -> Result<Outcome, Error> {
     around.sort();
     around.dedup();
     for repo in &around {
-        let report = realign_files(&known_files(runner, repo)?, &fix)?;
+        let files = match known_files(runner, repo) {
+            Ok(files) => files,
+            Err(e) => {
+                out.skipped.push((repo.clone(), e.to_string()));
+                continue;
+            }
+        };
+        let report = realign_files(&files, &fix)?;
         if !report.changed.is_empty() || !report.unwritable.is_empty() {
             out.reports.push((repo.clone(), report));
         }
@@ -566,6 +575,9 @@ pub fn run(
     }
     for path in &done.moved {
         say(out, &format!("renamed {}", path.display()))?;
+    }
+    for (repo, why) in &done.skipped {
+        say(out, &format!("skipped {}: {why}", repo.display()))?;
     }
     if done.ignored {
         say(
@@ -952,10 +964,18 @@ mod tests {
         fs::write(b.join("src/sib/.gitignore"), "data.log\n").unwrap();
         fs::write(b.join("src/sib/data.log"), &note).unwrap();
         git(&b.join("src/sib"), &["add", "tracked.md", ".gitignore"]);
+        fs::create_dir_all(b.join("src/broken")).unwrap(); // a stale worktree: git cannot read it
+        fs::write(
+            b.join("src/broken/.git"),
+            "gitdir: /nowhere/.git/worktrees/x\n",
+        )
+        .unwrap();
         fs::create_dir_all(b.join("src/plain")).unwrap(); // not a repository: left alone
         fs::write(b.join("src/plain/x.md"), &note).unwrap();
         p.fleets = vec![b.join("src")];
-        execute(&p, &ProcessRunner).unwrap();
+        let out = execute(&p, &ProcessRunner).unwrap();
+        assert_eq!(out.skipped.len(), 1, "{:?}", out.skipped);
+        assert_eq!(out.skipped[0].0, b.join("src/broken"));
         let g = b.join("into/group");
         assert_eq!(
             fs::read_to_string(b.join("src/sib/tracked.md")).unwrap(),
