@@ -9,11 +9,13 @@ pub mod glab;
 pub mod install_records;
 pub mod move_dir;
 pub mod process;
-pub mod realign;
 pub mod realign_fs;
 pub mod registry;
 pub mod rename;
 pub mod rename_file;
+
+/// Moved to `actpath` (ADR 0001); re-exported so existing `actautoma::realign` users keep working.
+pub use actpath::realign;
 
 #[cfg(test)]
 mod testing;

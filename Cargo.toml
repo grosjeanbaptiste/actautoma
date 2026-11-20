@@ -9,4 +9,5 @@ name = "actautoma"
 path = "src/lib.rs"
 
 [dependencies]
+actpath = { git = "ssh://git@github.com/grosjeanbaptiste/actpath.git", rev = "145c049dc720fb6dbd7ee3a3483588788aed2bae" }
 serde_json = "1"

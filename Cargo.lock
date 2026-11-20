@@ -6,8 +6,14 @@ version = 4
 name = "actautoma"
 version = "0.1.0"
 dependencies = [
+ "actpath",
  "serde_json",
 ]
+
+[[package]]
+name = "actpath"
+version = "0.1.0"
+source = "git+ssh://git@github.com/grosjeanbaptiste/actpath.git?rev=145c049dc720fb6dbd7ee3a3483588788aed2bae#145c049dc720fb6dbd7ee3a3483588788aed2bae"
 
 [[package]]
 name = "itoa"
