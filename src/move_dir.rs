@@ -11,13 +11,13 @@
 
 use crate::forge::{Error, Runner};
 use crate::realign::{encoded, replace, Rename};
-use crate::realign_fs::{realign_tree_files, rename_children, Report, SKIPPED_DIRS};
+use crate::realign_fs::{realign_files, realign_tree_files, rename_children, Report, SKIPPED_DIRS};
 use crate::rename::linked_worktrees;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 pub const USAGE: &str = "usage: actautoma move DIR --into PARENT [--root DIR]... \
-[--children DIR]... [--registry FILE] [--cargo-home DIR] [--dry-run]";
+[--children DIR]... [--fleet DIR]... [--registry FILE] [--cargo-home DIR] [--dry-run]";
 
 /// What to move and where the references live.
 #[derive(Clone)]
@@ -28,6 +28,9 @@ pub struct Plan {
     pub home: PathBuf,
     /// Folders whose text files are rewritten, besides the moved folder itself.
     pub roots: Vec<PathBuf>,
+    /// Folders holding repositories: only the files git knows (tracked, or untracked and not
+    /// ignored) of each repository found by scanning are rewritten.
+    pub fleets: Vec<PathBuf>,
     /// Folders whose children named after an encoded repository path are renamed.
     pub children: Vec<PathBuf>,
     /// Single text files rewritten when they exist (the registry, cargo's install records).
@@ -88,16 +91,23 @@ fn scan(dir: &Path, found: &mut Vec<PathBuf>) -> Result<(), Error> {
     Ok(())
 }
 
+/// The folder was already moved by a run that was cut short: finish it.
+fn resumed(plan: &Plan) -> bool {
+    !plan.dir.exists() && plan.new_dir().exists()
+}
+
 pub fn check(plan: &Plan) -> Result<(), Error> {
-    if !plan.dir.is_dir() {
-        return fail(format!("{} is not a folder", plan.dir.display()));
+    let new_dir = plan.new_dir();
+    if !resumed(plan) {
+        if !plan.dir.is_dir() {
+            return fail(format!("{} is not a folder", plan.dir.display()));
+        }
+        if new_dir.exists() {
+            return fail(format!("{} already exists", new_dir.display()));
+        }
     }
     if !plan.into.is_dir() {
         return fail(format!("{} is not a folder", plan.into.display()));
-    }
-    let new_dir = plan.new_dir();
-    if new_dir.exists() {
-        return fail(format!("{} already exists", new_dir.display()));
     }
     if new_dir.starts_with(&plan.dir) {
         return fail(format!(
@@ -108,6 +118,7 @@ pub fn check(plan: &Plan) -> Result<(), Error> {
     match plan
         .roots
         .iter()
+        .chain(&plan.fleets)
         .chain(&plan.children)
         .find(|d| !d.is_dir())
     {
@@ -116,10 +127,53 @@ pub fn check(plan: &Plan) -> Result<(), Error> {
     }
 }
 
+/// Every repository under `dir`, nested ones included (a repository can hold others).
+fn repos_deep(dir: &Path, found: &mut Vec<PathBuf>) -> Result<(), Error> {
+    if dir.join(".git").exists() {
+        found.push(dir.to_path_buf());
+    }
+    for entry in std::fs::read_dir(dir).map_err(|e| io(dir, "cannot read", &e))? {
+        let path = entry.map_err(|e| io(dir, "cannot list", &e))?.path();
+        let kind = std::fs::symlink_metadata(&path).map_err(|e| io(&path, "cannot stat", &e))?;
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if kind.is_dir() && name != ".git" && !SKIPPED_DIRS.contains(&name) {
+            repos_deep(&path, found)?;
+        }
+    }
+    Ok(())
+}
+
+/// The files git knows in `repo`: tracked, or untracked and not ignored.
+fn known_files(runner: &impl Runner, repo: &Path) -> Result<Vec<PathBuf>, Error> {
+    let raw = runner.run(
+        "git",
+        &["ls-files", "-z", "-co", "--exclude-standard"],
+        Some(repo),
+    )?;
+    Ok(raw
+        .split('\0')
+        .filter(|f| !f.is_empty())
+        .map(|f| repo.join(f))
+        .filter(|f| f.is_file())
+        .collect())
+}
+
 /// `path` as it is after the move.
 fn after(path: &Path, old: &Path, new: &Path) -> PathBuf {
-    path.strip_prefix(old)
-        .map_or_else(|_| path.to_path_buf(), |rest| new.join(rest))
+    path.strip_prefix(old).map_or_else(
+        |_| path.to_path_buf(),
+        // `join("")` would end the path with a `/`
+        |rest| {
+            if rest.as_os_str().is_empty() {
+                new.to_path_buf()
+            } else {
+                new.join(rest)
+            }
+        },
+    )
 }
 
 /// The literal rewrites of one moved path: itself, its `~` form and its encoded form.
@@ -185,8 +239,11 @@ fn relative_paths(
             let end = rest.find(|c: char| !is_path_char(c)).unwrap_or(rest.len());
             let token = &rest[..end];
             let core = token.trim_end_matches('.');
-            let target = after(&lexical(&old_base.join(core)), old, new);
-            if target.exists() {
+            let resolved = lexical(&old_base.join(core));
+            let target = after(&resolved, old, new);
+            // rewritten only when the file or its target moved: never to tidy a path
+            let moved = old_base != new_base || resolved != target;
+            if moved && target.exists() {
                 let mut fixed = relative(new_base, &target).display().to_string();
                 if core.ends_with('/') {
                     fixed.push('/');
@@ -245,7 +302,7 @@ pub fn renames(plan: &Plan) -> Vec<Rename> {
 pub fn with_defaults(plan: &mut Plan, cargo_home: &Path) {
     let claude = plan.home.join(".claude");
     if let Some(parent) = plan.dir.parent().filter(|p| p.is_dir()) {
-        plan.roots.push(parent.to_path_buf());
+        plan.fleets.push(parent.to_path_buf());
     }
     if claude.join("projects").is_dir() {
         plan.children.push(claude.join("projects"));
@@ -263,7 +320,12 @@ pub fn with_defaults(plan: &mut Plan, cargo_home: &Path) {
         ]
         .map(|f| claude.join(f)),
     );
-    for list in [&mut plan.roots, &mut plan.children, &mut plan.files] {
+    for list in [
+        &mut plan.roots,
+        &mut plan.fleets,
+        &mut plan.children,
+        &mut plan.files,
+    ] {
         list.sort();
         list.dedup();
     }
@@ -301,59 +363,78 @@ fn rewrite_file(file: &Path, renames: &[Rename]) -> Result<bool, Error> {
     Ok(true)
 }
 
-/// Move the folder, re-link the worktrees, rewrite the references.
+/// Move the folder, re-link the worktrees, rewrite the references. A folder already moved by a
+/// run that was cut short is not moved again: the rest is done.
 pub fn execute(plan: &Plan, runner: &impl Runner) -> Result<Outcome, Error> {
     check(plan)?;
     // git prints real paths (`/private/var`, not `/var`): compare like with like
     let real = |p: &Path| p.canonicalize().map_err(|e| io(p, "cannot resolve", &e));
+    let dir = match real(&plan.dir) {
+        Ok(dir) => dir,
+        Err(_) => real(plan.dir.parent().unwrap_or(&plan.dir))?
+            .join(plan.dir.file_name().unwrap_or_default()),
+    };
     let plan = &Plan {
-        dir: real(&plan.dir)?,
+        dir,
         into: real(&plan.into)?,
         ..plan.clone()
     };
     let (old, new) = (&plan.dir, plan.new_dir());
-    let repos = repos_under(old)?;
-    let mut linked = Vec::new(); // (main clone, its linked worktrees)
-    for main in repos.iter().filter(|r| r.join(".git").is_dir()) {
-        linked.push((main, linked_worktrees(runner, main)?));
+    if !resumed(plan) {
+        std::fs::rename(old, &new).map_err(|e| io(old, "cannot move", &e))?;
     }
-    std::fs::rename(old, &new).map_err(|e| io(old, "cannot move", &e))?;
-    for (main, worktrees) in linked.iter().filter(|(_, w)| !w.is_empty()) {
-        let paths: Vec<String> = worktrees
+    let repos = repos_under(&new)?;
+    for main in repos.iter().filter(|r| r.join(".git").is_dir()) {
+        let paths: Vec<String> = linked_worktrees(runner, main)?
             .iter()
             .map(|w| after(w, old, &new))
             .filter(|w| w.is_dir())
             .map(|w| w.display().to_string())
             .collect();
-        let mut args = vec!["worktree", "repair"];
-        args.extend(paths.iter().map(String::as_str));
-        runner.run("git", &args, Some(&after(main, old, &new)))?;
+        if !paths.is_empty() {
+            let mut args = vec!["worktree", "repair"];
+            args.extend(paths.iter().map(String::as_str));
+            runner.run("git", &args, Some(main))?;
+        }
     }
     let all = renames(plan);
     let mut out = Outcome {
-        repos: repos.iter().map(|r| after(r, old, &new)).collect(),
+        repos: repos.clone(),
         ..Outcome::default()
+    };
+    let fix = |file: &Path, text: &str| {
+        let (text, a) = replace(text, &all);
+        let new_base = file.parent().unwrap_or(file);
+        let old_base = new_base
+            .strip_prefix(&new)
+            .map_or_else(|_| new_base.to_path_buf(), |rest| old.join(rest));
+        let (text, b) = relative_paths(&text, &old_base, new_base, old, &new);
+        (text, a + b)
     };
     let covered = plan.roots.iter().any(|r| new.starts_with(r));
     for root in std::iter::once(&new)
         .filter(|_| !covered)
         .chain(&plan.roots)
     {
-        let fix = |file: &Path, text: &str| {
-            let (text, a) = replace(text, &all);
-            let new_base = file.parent().unwrap_or(file);
-            let old_base = new_base
-                .strip_prefix(&new)
-                .map_or_else(|_| new_base.to_path_buf(), |rest| old.join(rest));
-            let (text, b) = relative_paths(&text, &old_base, new_base, old, &new);
-            (text, a + b)
-        };
         out.reports
             .push((root.clone(), realign_tree_files(root, &fix)?));
     }
-    let per_repo: Vec<Rename> = repos
-        .iter()
-        .flat_map(|r| path_renames(r, &after(r, old, &new), &plan.home))
+    let mut around = Vec::new();
+    for fleet in &plan.fleets {
+        repos_deep(fleet, &mut around)?;
+    }
+    around.retain(|r| !r.starts_with(&new));
+    around.sort();
+    around.dedup();
+    for repo in &around {
+        let report = realign_files(&known_files(runner, repo)?, &fix)?;
+        if !report.changed.is_empty() || !report.unwritable.is_empty() {
+            out.reports.push((repo.clone(), report));
+        }
+    }
+    let per_repo: Vec<Rename> = std::iter::once(&new)
+        .chain(&repos)
+        .flat_map(|r| path_renames(&after_back(r, old, &new), r, &plan.home))
         .collect();
     for dir in &plan.children {
         out.moved.extend(rename_children(dir, &per_repo)?);
@@ -368,6 +449,11 @@ pub fn execute(plan: &Plan, runner: &impl Runner) -> Result<Outcome, Error> {
     Ok(out)
 }
 
+/// `path` (inside `new`) as it was before the move.
+fn after_back(path: &Path, old: &Path, new: &Path) -> PathBuf {
+    after(path, new, old)
+}
+
 fn parse(
     args: &[String],
     cwd: &Path,
@@ -380,12 +466,13 @@ fn parse(
     let home = PathBuf::from(env("HOME").ok_or_else(|| Error::Run("HOME is not set".into()))?);
     let cargo_home = env("CARGO_HOME").map_or_else(|| home.join(".cargo"), PathBuf::from);
     let abs = |p: &str| cwd.join(p);
-    let (mut into, mut dry) = (None, false);
+    let (mut into, mut dry, mut fleets) = (None, false, Vec::new());
     let mut plan = Plan {
         dir: abs(dir),
         into: PathBuf::new(),
         home,
         roots: vec![],
+        fleets: vec![],
         children: vec![],
         files: vec![],
     };
@@ -396,6 +483,7 @@ fn parse(
             "--into" => into = Some(value()?),
             "--root" => plan.roots.push(value()?),
             "--children" => plan.children.push(value()?),
+            "--fleet" => fleets.push(value()?),
             "--registry" => plan.files.push(value()?),
             "--cargo-home" => {
                 let dir = value()?;
@@ -408,6 +496,9 @@ fn parse(
     }
     plan.into = into.ok_or_else(usage)?;
     with_defaults(&mut plan, &cargo_home);
+    if !fleets.is_empty() {
+        plan.fleets = fleets; // named by the user: they replace the one found around the folder
+    }
     Ok((plan, dry))
 }
 
@@ -463,6 +554,12 @@ pub fn run(
             r.links.len()
         );
         say(out, &line)?;
+        for file in &r.unwritable {
+            say(
+                out,
+                &format!("not writable, still to fix: {}", file.display()),
+            )?;
+        }
     }
     for file in &done.files {
         say(out, &format!("rewrote {}", file.display()))?;
@@ -526,6 +623,7 @@ mod tests {
             into: base.join("into"),
             home: base.to_path_buf(),
             roots: vec![],
+            fleets: vec![],
             children: vec![],
             files: vec![],
         }
@@ -567,6 +665,8 @@ mod tests {
         .unwrap();
         fs::create_dir_all(b.join("claude")).unwrap();
         fs::create_dir_all(b.join(format!("claude/{}", encoded(&p.dir.join("a"))))).unwrap();
+        let group_sessions = encoded(&p.dir);
+        fs::create_dir_all(b.join("claude").join(&group_sessions)).unwrap();
         let reg = b.join("projects.txt");
         fs::write(&reg, format!("a|{}/a\nz|/else/z\n", p.dir.display())).unwrap();
         let mut p = p;
@@ -590,6 +690,8 @@ mod tests {
             format!("a|{}/a\nz|/else/z\n", g.display())
         );
         assert!(b.join(format!("claude/{}", encoded(&g.join("a")))).is_dir());
+        assert!(b.join("claude").join(encoded(&g)).is_dir());
+        assert!(!b.join("claude").join(&group_sessions).exists());
         fs::remove_dir_all(&b).unwrap();
     }
 
@@ -712,6 +814,29 @@ mod tests {
     }
 
     #[test]
+    fn a_named_fleet_replaces_the_automatic_one() {
+        let b = scratch("fleetflag");
+        let home = b.join("h");
+        for d in ["grp", "Dest", "Only"] {
+            fs::create_dir_all(home.join("Source").join(d)).unwrap();
+        }
+        let env = |k: &str| (k == "HOME").then(|| home.display().to_string());
+        let args: Vec<String> = [
+            "move",
+            "Source/grp",
+            "--into",
+            "Source/Dest",
+            "--fleet",
+            "Source/Only",
+        ]
+        .map(String::from)
+        .to_vec();
+        let (plan, _) = parse(&args, &home, &env).unwrap();
+        assert_eq!(plan.fleets, [home.join("Source/Only")]);
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
     fn the_defaults_name_the_references_the_user_does_not_have_to_list() {
         let b = scratch("auto");
         let home = b.join("h");
@@ -723,11 +848,13 @@ mod tests {
             into: home.join("Source/Dest"),
             home: home.clone(),
             roots: vec![],
+            fleets: vec![],
             children: vec![],
             files: vec![],
         };
         with_defaults(&mut p, &home.join(".cargo"));
-        assert_eq!(p.roots, [home.join("Source")]);
+        assert_eq!(p.fleets, [home.join("Source")]);
+        assert!(p.roots.is_empty());
         assert_eq!(p.children, [home.join(".claude/projects")]);
         assert!(p.files.contains(&home.join(".cargo/.crates.toml")));
         assert!(p.files.contains(&home.join(".claude/CLAUDE.md")));
@@ -794,6 +921,82 @@ mod tests {
             fs::read_to_string(b.join("into/group/a/Cargo.toml")).unwrap(),
             "out = \"../../../src/other/x\"\nin = \"../a\"\n"
         );
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn a_path_that_did_not_move_is_never_rewritten_even_to_normalize_it() {
+        let b = scratch("still");
+        let mut p = plan(&b);
+        repo(&p.dir.join("a"));
+        fs::create_dir_all(b.join("src/other/x")).unwrap();
+        let text = "p = \"../other/./x\"\n";
+        fs::write(b.join("src/other/Cargo.toml"), text).unwrap();
+        p.roots = vec![b.join("src/other")];
+        execute(&p, &ProcessRunner).unwrap();
+        assert_eq!(
+            fs::read_to_string(b.join("src/other/Cargo.toml")).unwrap(),
+            text
+        );
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn around_the_moved_folder_only_the_files_git_knows_are_rewritten() {
+        let b = scratch("fleet");
+        let mut p = plan(&b);
+        repo(&p.dir.join("a"));
+        repo(&b.join("src/sib"));
+        let note = format!("see {}/a\n", p.dir.display());
+        fs::write(b.join("src/sib/tracked.md"), &note).unwrap();
+        fs::write(b.join("src/sib/.gitignore"), "data.log\n").unwrap();
+        fs::write(b.join("src/sib/data.log"), &note).unwrap();
+        git(&b.join("src/sib"), &["add", "tracked.md", ".gitignore"]);
+        fs::create_dir_all(b.join("src/plain")).unwrap(); // not a repository: left alone
+        fs::write(b.join("src/plain/x.md"), &note).unwrap();
+        p.fleets = vec![b.join("src")];
+        execute(&p, &ProcessRunner).unwrap();
+        let g = b.join("into/group");
+        assert_eq!(
+            fs::read_to_string(b.join("src/sib/tracked.md")).unwrap(),
+            format!("see {}/a\n", g.display())
+        );
+        assert_eq!(
+            fs::read_to_string(b.join("src/sib/data.log")).unwrap(),
+            note
+        );
+        assert_eq!(fs::read_to_string(b.join("src/plain/x.md")).unwrap(), note);
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn a_move_cut_short_is_finished_by_running_it_again() {
+        let b = scratch("resume");
+        let mut p = plan(&b);
+        repo(&p.dir.join("a"));
+        git(
+            &p.dir.join("a"),
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "w",
+                b.join("outside").to_str().unwrap(),
+            ],
+        );
+        let note = format!("see {}/a\n", p.dir.display());
+        fs::write(p.dir.join("a/NOTES.md"), &note).unwrap();
+        fs::rename(&p.dir, b.join("into/group")).unwrap(); // what a cut-short run leaves
+        p.roots = vec![];
+        let out = execute(&p, &ProcessRunner).unwrap();
+        let g = b.join("into/group");
+        assert_eq!(out.repos, [g.join("a")]);
+        assert_eq!(
+            fs::read_to_string(g.join("a/NOTES.md")).unwrap(),
+            format!("see {}/a\n", g.display())
+        );
+        git(&b.join("outside"), &["status", "-s"]);
         fs::remove_dir_all(&b).unwrap();
     }
 }

@@ -36,6 +36,8 @@ pub struct Report {
     pub not_text: Vec<PathBuf>,
     /// Symlinks left alone: their target is not this pass's to rewrite.
     pub links: Vec<PathBuf>,
+    /// Files that hold a reference but could not be written (read-only): the pass goes on.
+    pub unwritable: Vec<PathBuf>,
 }
 
 fn io(path: &Path, what: &str, e: &std::io::Error) -> Error {
@@ -81,8 +83,13 @@ fn rewrite(path: &Path, with: FileRewriter, report: &mut Report) -> Result<(), E
     };
     let (out, count) = with(path, &text);
     if count > 0 {
-        fs::write(path, out).map_err(|e| io(path, "cannot write", &e))?;
-        report.changed.push(path.to_path_buf());
+        match fs::write(path, out) {
+            Ok(()) => report.changed.push(path.to_path_buf()),
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                report.unwritable.push(path.to_path_buf());
+            }
+            Err(e) => return Err(io(path, "cannot write", &e)),
+        }
     }
     Ok(())
 }
@@ -102,6 +109,18 @@ pub fn realign_tree_files(root: &Path, with: FileRewriter) -> Result<Report, Err
     let mut report = Report::default();
     visit(root, with, &mut report)?;
     report.changed.sort();
+    report.unwritable.sort();
+    Ok(report)
+}
+
+/// Rewrite the named files only (a repository's tracked files, say), no folder is walked.
+pub fn realign_files(files: &[PathBuf], with: FileRewriter) -> Result<Report, Error> {
+    let mut report = Report::default();
+    for file in files {
+        rewrite(file, with, &mut report)?;
+    }
+    report.changed.sort();
+    report.unwritable.sort();
     Ok(report)
 }
 
@@ -203,6 +222,28 @@ mod tests {
         f.set_len(MAX_TEXT_BYTES + 1).unwrap(); // sparse: holds no `me/old`, but is over the limit
         let report = realign_tree(&s.0, &r()).unwrap();
         assert_eq!(report.not_text, vec![big]);
+    }
+
+    #[test]
+    fn an_unwritable_file_is_named_and_the_pass_goes_on() {
+        use std::os::unix::fs::PermissionsExt;
+        let s = Scratch::new("ro");
+        fs::write(s.0.join("a.txt"), "me/old\n").unwrap();
+        fs::write(s.0.join("z.txt"), "me/old\n").unwrap();
+        fs::set_permissions(s.0.join("a.txt"), fs::Permissions::from_mode(0o444)).unwrap();
+        let report = realign_tree(&s.0, &r()).unwrap();
+        assert_eq!(report.unwritable, vec![s.0.join("a.txt")]);
+        assert_eq!(report.changed, vec![s.0.join("z.txt")]);
+    }
+
+    #[test]
+    fn named_files_are_rewritten_without_walking_a_folder() {
+        let s = Scratch::new("files");
+        fs::write(s.0.join("a.txt"), "me/old\n").unwrap();
+        fs::write(s.0.join("b.txt"), "me/old\n").unwrap();
+        let report = realign_files(&[s.0.join("a.txt")], &|_, t| replace(t, &r())).unwrap();
+        assert_eq!(report.changed, vec![s.0.join("a.txt")]);
+        assert_eq!(fs::read_to_string(s.0.join("b.txt")).unwrap(), "me/old\n");
     }
 
     #[test]
