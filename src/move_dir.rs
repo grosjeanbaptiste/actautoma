@@ -53,6 +53,8 @@ pub struct Outcome {
     pub moved: Vec<PathBuf>,
     /// Repositories around the folder that git could not read (a stale worktree), with why.
     pub skipped: Vec<(PathBuf, String)>,
+    /// Worktrees git had lost track of, re-linked.
+    pub relinked: Vec<PathBuf>,
     /// The new parent is a repository and now ignores the moved folder.
     pub ignored: bool,
 }
@@ -428,6 +430,15 @@ pub fn execute(plan: &Plan, runner: &impl Runner) -> Result<Outcome, Error> {
     around.retain(|r| !r.starts_with(&new));
     around.sort();
     around.dedup();
+    let known: Vec<PathBuf> = {
+        let mut all: Vec<PathBuf> = repos.iter().chain(&around).cloned().collect();
+        all.sort();
+        all.dedup();
+        all
+    };
+    let (relinked, failed) = relink_orphans(runner, &known);
+    out.relinked = relinked;
+    out.skipped.extend(failed);
     for repo in &around {
         let files = match known_files(runner, repo) {
             Ok(files) => files,
@@ -456,6 +467,67 @@ pub fn execute(plan: &Plan, runner: &impl Runner) -> Result<Outcome, Error> {
     let name = new.file_name().unwrap_or_default().to_string_lossy();
     out.ignored = ignore_in_parent(&plan.into, &name)?;
     Ok(out)
+}
+
+/// Linked worktrees git lost track of, moved by hand or left behind by an older move: a
+/// worktree whose `.git` file points to a missing admin folder (its main clone moved: found
+/// among `known` by name) or whose admin folder remembers another place is re-linked with
+/// `git worktree repair <path>` run from its main clone.
+fn relink_orphans(
+    runner: &impl Runner,
+    known: &[PathBuf],
+) -> (Vec<PathBuf>, Vec<(PathBuf, String)>) {
+    let (mut fixed, mut failed) = (Vec::new(), Vec::new());
+    for wt in known.iter().filter(|r| r.join(".git").is_file()) {
+        let Ok(text) = std::fs::read_to_string(wt.join(".git")) else {
+            continue;
+        };
+        let Some(admin) = text
+            .trim()
+            .strip_prefix("gitdir:")
+            .map(|a| wt.join(a.trim()))
+        else {
+            continue;
+        };
+        // <main>/.git/worktrees/<id>: anything else (a submodule) is not ours
+        let Some(id) = admin.file_name() else {
+            continue;
+        };
+        let Some(dotgit) = admin
+            .parent()
+            .filter(|w| w.file_name().is_some_and(|n| n == "worktrees"))
+            .and_then(Path::parent)
+            .filter(|d| d.file_name().is_some_and(|n| n == ".git"))
+        else {
+            continue;
+        };
+        let here = |p: &Path| p.canonicalize().ok();
+        let remembered = std::fs::read_to_string(admin.join("gitdir"))
+            .ok()
+            .and_then(|b| here(Path::new(b.trim())));
+        if admin.is_dir() && remembered.is_some() && remembered == here(&wt.join(".git")) {
+            continue;
+        }
+        let main = if admin.is_dir() {
+            dotgit.parent().map(Path::to_path_buf)
+        } else {
+            let mut named = known.iter().filter(|m| {
+                m.join(".git/worktrees").join(id).is_dir()
+                    && m.file_name() == dotgit.parent().and_then(Path::file_name)
+            });
+            named.next().filter(|_| named.next().is_none()).cloned()
+        };
+        let Some(main) = main else { continue };
+        match runner.run(
+            "git",
+            &["worktree", "repair", &wt.display().to_string()],
+            Some(&main),
+        ) {
+            Ok(_) => fixed.push(wt.clone()),
+            Err(e) => failed.push((wt.clone(), e.to_string())),
+        }
+    }
+    (fixed, failed)
 }
 
 /// `path` (inside `new`) as it was before the move.
@@ -576,6 +648,9 @@ pub fn run(
     for path in &done.moved {
         say(out, &format!("renamed {}", path.display()))?;
     }
+    for wt in &done.relinked {
+        say(out, &format!("re-linked worktree {}", wt.display()))?;
+    }
     for (repo, why) in &done.skipped {
         say(out, &format!("skipped {}: {why}", repo.display()))?;
     }
@@ -626,6 +701,16 @@ mod tests {
         fs::create_dir_all(dir).unwrap();
         git(dir, &["init", "-q", "-b", "main"]);
         git(dir, &["commit", "-q", "--allow-empty", "-m", "x"]);
+    }
+
+    /// What `git worktree list --porcelain` says in `main`.
+    fn listed(main: &Path) -> String {
+        let out = Command::new("git")
+            .args(["worktree", "list", "--porcelain"])
+            .current_dir(main)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
     fn plan(base: &Path) -> Plan {
@@ -1017,6 +1102,65 @@ mod tests {
             format!("see {}/a\n", g.display())
         );
         git(&b.join("outside"), &["status", "-s"]);
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn a_worktree_git_no_longer_knows_the_place_of_is_found_and_relinked() {
+        let b = scratch("orphan");
+        let p = plan(&b);
+        repo(&p.dir.join("Main"));
+        let registered = p.dir.join("Main-wt");
+        git(
+            &p.dir.join("Main"),
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "w",
+                registered.to_str().unwrap(),
+            ],
+        );
+        fs::rename(&registered, p.dir.join("Main-wt-moved")).unwrap(); // moved by hand: git still says Main-wt
+        execute(&p, &ProcessRunner).unwrap();
+        git(&b.join("into/group/Main-wt-moved"), &["status", "-s"]);
+        let text = listed(&b.join("into/group/Main"));
+        assert!(
+            text.contains("Main-wt-moved") && !text.contains("prunable"),
+            "{text}"
+        );
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn a_worktree_moved_by_hand_whose_main_clone_stays_is_relinked_too() {
+        let b = scratch("orphan2");
+        let p = plan(&b);
+        repo(&b.join("elsewhere/Main"));
+        fs::create_dir_all(&p.dir).unwrap();
+        let registered = p.dir.join("wt");
+        git(
+            &b.join("elsewhere/Main"),
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "w",
+                registered.to_str().unwrap(),
+            ],
+        );
+        fs::rename(&registered, p.dir.join("wt2")).unwrap();
+        let mut p = p;
+        p.fleets = vec![b.join("elsewhere")];
+        execute(&p, &ProcessRunner).unwrap();
+        git(&b.join("into/group/wt2"), &["status", "-s"]);
+        let text = listed(&b.join("elsewhere/Main"));
+        assert!(
+            text.contains("group/wt2") && !text.contains("prunable"),
+            "{text}"
+        );
         fs::remove_dir_all(&b).unwrap();
     }
 }
