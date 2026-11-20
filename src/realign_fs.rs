@@ -12,7 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Folders that hold caches, builds or vendored code, never references.
-const SKIPPED_DIRS: &[&str] = &[
+pub(crate) const SKIPPED_DIRS: &[&str] = &[
     ".git",
     ".venv",
     "target",
@@ -23,6 +23,9 @@ const SKIPPED_DIRS: &[&str] = &[
     ".ruff_cache",
     ".pytest_cache",
 ];
+
+/// Larger files are reported, never read.
+const MAX_TEXT_BYTES: u64 = 16 * 1024 * 1024;
 
 /// What a pass did.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -39,7 +42,10 @@ fn io(path: &Path, what: &str, e: &std::io::Error) -> Error {
     Error::Run(format!("{what} {}: {e}", path.display()))
 }
 
-fn visit(dir: &Path, renames: &[Rename], with: Replacer, report: &mut Report) -> Result<(), Error> {
+/// How a file is rewritten, given its path and its text: the new text and the number of rewrites.
+pub type FileRewriter<'a> = &'a dyn Fn(&Path, &str) -> (String, usize);
+
+fn visit(dir: &Path, with: FileRewriter, report: &mut Report) -> Result<(), Error> {
     let entries = fs::read_dir(dir).map_err(|e| io(dir, "cannot read", &e))?;
     for entry in entries {
         let path = entry.map_err(|e| io(dir, "cannot list", &e))?.path();
@@ -52,28 +58,28 @@ fn visit(dir: &Path, renames: &[Rename], with: Replacer, report: &mut Report) ->
                 .and_then(|n| n.to_str())
                 .unwrap_or_default();
             if !SKIPPED_DIRS.contains(&name) {
-                visit(&path, renames, with, report)?;
+                visit(&path, with, report)?;
             }
         } else {
-            rewrite(&path, renames, with, report)?;
+            rewrite(&path, with, report)?;
         }
     }
     Ok(())
 }
 
-fn rewrite(
-    path: &Path,
-    renames: &[Rename],
-    with: Replacer,
-    report: &mut Report,
-) -> Result<(), Error> {
+fn rewrite(path: &Path, with: FileRewriter, report: &mut Report) -> Result<(), Error> {
+    // a data file (geo extracts, models) is not a reference holder, and must not be read whole
+    if fs::metadata(path).is_ok_and(|m| m.len() > MAX_TEXT_BYTES) {
+        report.not_text.push(path.to_path_buf());
+        return Ok(());
+    }
     let Ok(text) = fs::read_to_string(path) else {
         // Not UTF-8 (or unreadable): a read error must not look like "no text".
         fs::File::open(path).map_err(|e| io(path, "cannot read", &e))?;
         report.not_text.push(path.to_path_buf());
         return Ok(());
     };
-    let (out, count) = with(&text, renames);
+    let (out, count) = with(path, &text);
     if count > 0 {
         fs::write(path, out).map_err(|e| io(path, "cannot write", &e))?;
         report.changed.push(path.to_path_buf());
@@ -88,8 +94,13 @@ pub fn realign_tree(root: &Path, renames: &[Rename]) -> Result<Report, Error> {
 
 /// [`realign_tree`] with a chosen way of rewriting each text.
 pub fn realign_tree_with(root: &Path, renames: &[Rename], with: Replacer) -> Result<Report, Error> {
+    realign_tree_files(root, &|_, text| with(text, renames))
+}
+
+/// [`realign_tree`] with a rewrite that also sees each file's path.
+pub fn realign_tree_files(root: &Path, with: FileRewriter) -> Result<Report, Error> {
     let mut report = Report::default();
-    visit(root, renames, with, &mut report)?;
+    visit(root, with, &mut report)?;
     report.changed.sort();
     Ok(report)
 }
@@ -182,6 +193,16 @@ mod tests {
         assert_eq!(report.not_text, vec![s.0.join("b.bin")]);
         assert_eq!(report.links, vec![s.0.join("link")]);
         assert!(report.changed.is_empty());
+    }
+
+    #[test]
+    fn a_data_file_over_the_size_limit_is_named_and_never_read() {
+        let s = Scratch::new("big");
+        let big = s.0.join("geo.txt");
+        let f = fs::File::create(&big).unwrap();
+        f.set_len(MAX_TEXT_BYTES + 1).unwrap(); // sparse: holds no `me/old`, but is over the limit
+        let report = realign_tree(&s.0, &r()).unwrap();
+        assert_eq!(report.not_text, vec![big]);
     }
 
     #[test]

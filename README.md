@@ -38,6 +38,14 @@ actautoma rename-file OLD NEW [--root DIR]... [--replace FROM TO]... [--dry-run]
 
 Moves one tracked file with `git mv` (run in its folder; the target must not exist and its folder must), then rewrites, under each `--root`, the old file name and the old full path by whole name, and every `--replace FROM TO` pair (for example `ADR-042` to `ADR-043` when an ADR is renumbered). A failing `git mv` stops before any rewrite. `--dry-run` prints the rewrites and changes nothing.
 
+### Moving a folder
+
+```text
+actautoma move DIR --into PARENT [--root DIR]... [--children DIR]... [--registry FILE] [--cargo-home DIR] [--dry-run]
+```
+
+Moves `DIR` under `PARENT`, keeping its name: one repository, or a folder of repositories. The repositories are found by scanning `DIR` (a folder holding `.git`, linked worktrees included; `target`, `node_modules` and caches are skipped), never listed by hand. The folder moves in one `rename`, so the `../sibling` paths between its repositories stay true. Then each main clone runs `git worktree repair` with its worktrees (inside or outside `DIR`) and every written path is rewritten, in the moved folder and in the folders around it (`PARENT` of `DIR`), Claude's session folders (`~/.claude/projects`, children renamed after each repository), cargo's install records, `--registry` and the user-wide Claude files, without being named. A path is rewritten as an absolute path, `~/`, `$HOME/` or `${HOME}/` form, the encoded folder name, the tail it shares with the new place when it hangs on a variable (`$D/../Source/old` becomes `$D/../Source/Dest/old`), and a `../x` path whose target still exists, recomputed from its file (the target must exist, so `../../etc/passwd` in a test is left alone). Files over 16 MiB are named in the report, never read. When `PARENT` is a repository it starts ignoring the folder (`/name/` in its `.gitignore`, once). Every check runs before the move; `--dry-run` lists the repositories found and changes nothing.
+
 ### Library
 
 ```rust,no_run

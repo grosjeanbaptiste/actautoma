@@ -107,7 +107,10 @@ fn set_remote(runner: &impl Runner, plan: &Plan, renames: &[Rename]) -> Result<(
 }
 
 /// The linked worktrees of `dir` (the main one excluded): their `.git` files point at `dir`.
-fn linked_worktrees(runner: &impl Runner, dir: &std::path::Path) -> Result<Vec<PathBuf>, Error> {
+pub(crate) fn linked_worktrees(
+    runner: &impl Runner,
+    dir: &std::path::Path,
+) -> Result<Vec<PathBuf>, Error> {
     let raw = runner.run("git", &["worktree", "list", "--porcelain"], Some(dir))?;
     Ok(raw
         .lines()

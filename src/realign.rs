@@ -23,7 +23,7 @@ fn rename(from: impl Into<String>, to: impl Into<String>) -> Rename {
     }
 }
 
-fn encoded(dir: &Path) -> String {
+pub(crate) fn encoded(dir: &Path) -> String {
     dir.to_string_lossy().replace('/', "-")
 }
 

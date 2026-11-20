@@ -155,6 +155,9 @@ pub fn dispatch(
     if args.first().map(String::as_str) == Some("rename-family") {
         return rename_family(args, cwd, out);
     }
+    if args.first().map(String::as_str) == Some("move") {
+        return crate::move_dir::run(args, cwd, env, runner, out);
+    }
     if args.first().map(String::as_str) == Some("rename-file") {
         return crate::rename_file::run(args, cwd, runner, out);
     }
