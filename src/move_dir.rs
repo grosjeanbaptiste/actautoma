@@ -598,7 +598,12 @@ pub fn run(
     let (plan, dry) = parse(args, cwd, env)?;
     if dry {
         check(&plan)?;
-        let repos = repos_under(&plan.dir)?;
+        let scanned = if resumed(&plan) {
+            plan.new_dir()
+        } else {
+            plan.dir.clone()
+        };
+        let repos = repos_under(&scanned)?;
         say(
             out,
             &format!("{} -> {}", plan.dir.display(), plan.new_dir().display()),
@@ -880,6 +885,23 @@ mod tests {
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("2 repositories found"), "{text}");
         assert!(p.dir.join("a/.git").is_dir() && !b.join("into/group").exists());
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn a_dry_run_of_a_folder_already_moved_by_hand_scans_the_new_place() {
+        let b = scratch("dryresume");
+        let p = plan(&b);
+        repo(&p.dir.join("a"));
+        fs::rename(&p.dir, p.new_dir()).unwrap();
+        let env = |k: &str| (k == "HOME").then(|| b.display().to_string());
+        let args: Vec<String> = ["move", "src/group", "--into", "into", "--dry-run"]
+            .map(String::from)
+            .to_vec();
+        let mut out = Vec::new();
+        run(&args, &b, &env, &ProcessRunner, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("1 repositories found"), "{text}");
         fs::remove_dir_all(&b).unwrap();
     }
 
