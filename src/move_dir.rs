@@ -1019,4 +1019,71 @@ mod tests {
         git(&b.join("outside"), &["status", "-s"]);
         fs::remove_dir_all(&b).unwrap();
     }
+
+    #[test]
+    fn a_folder_moved_by_hand_is_resumed_and_gets_its_references_rewritten() {
+        let b = scratch("already");
+        let mut p = plan(&b);
+        repo(&p.dir.join("a"));
+        fs::create_dir_all(b.join("cfg")).unwrap();
+        fs::write(b.join("cfg/x.txt"), format!("at {}/a", p.dir.display())).unwrap();
+        let reg = b.join("records.json");
+        fs::write(&reg, format!("path+file://{}/a", p.dir.display())).unwrap();
+        let new = b.join("into/group");
+        fs::rename(&p.dir, &new).unwrap(); // moved by something else
+        (p.roots, p.files) = (vec![b.join("cfg")], vec![reg.clone()]);
+        let out = execute(&p, &ProcessRunner).unwrap();
+        assert_eq!(out.repos, [new.join("a")]);
+        assert!(new.join("a/.git").is_dir() && !p.dir.exists());
+        assert_eq!(
+            fs::read_to_string(b.join("cfg/x.txt")).unwrap(),
+            format!("at {}/a", new.display())
+        );
+        assert_eq!(
+            fs::read_to_string(&reg).unwrap(),
+            format!("path+file://{}/a", new.display())
+        );
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn a_linked_worktree_outside_is_relinked_after_a_move_by_hand() {
+        let b = scratch("already-wt");
+        let p = plan(&b);
+        repo(&p.dir.join("a"));
+        let outside = b.join("outside");
+        git(
+            &p.dir.join("a"),
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "w1",
+                outside.to_str().unwrap(),
+            ],
+        );
+        let new = b.join("into/group");
+        fs::rename(&p.dir, &new).unwrap();
+        execute(&p, &ProcessRunner).unwrap();
+        git(&outside, &["status", "--short"]); // fails while the link points at the old clone
+        git(&new.join("a"), &["worktree", "list"]);
+        let list = Command::new("git")
+            .args(["worktree", "list", "--porcelain"])
+            .current_dir(new.join("a"))
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&list.stdout).into_owned();
+        assert!(!text.contains("prunable"), "{text}");
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn a_run_refuses_when_neither_folder_exists() {
+        let b = scratch("already-new");
+        let p = plan(&b);
+        let error = execute(&p, &ProcessRunner).unwrap_err().to_string();
+        assert!(error.ends_with("src/group is not a folder"), "{error}");
+        fs::remove_dir_all(&b).unwrap();
+    }
 }
