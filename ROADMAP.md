@@ -7,18 +7,21 @@ Every workflow an agent or the owner runs with `git` or `gh` goes through
 each such use names the missing verb so it can be added here.
 
 Proposed split (mine, to confirm with the owner): `actrepo` holds the single
-verbs on a repository, its branches, worktrees and pull requests; `actautoma`
+verbs on a repository: commit, push, pull, branches, worktrees and pull requests; `actautoma`
 holds the workflows that chain several of them (ship, merge a stack, report a
 problem upstream). Both stay thin over `git` and `gh`, with the strictness of
 the rest of the doctrine (no silent failure, a refusal names what and why).
 
 ### Verbs missing today (found by shipping 30 PRs on 2026-11-22/23 with raw commands)
 
-`actrepo` has `pr create`, `pr merge`, `push`, `worktree list|prune`, `status`.
+`actrepo` has `pr create`, `pr merge`, `push` (a repository and its nested ones), `worktree list|prune`, `status`; it has no `commit` and no `pull`.
 Used by hand instead:
 
 | Raw command | Wanted verb | Owner |
 |---|---|---|
+| `git add PATH… && git commit -m …` (by pathspec, never a peer's file) | `actrepo commit --path P… -m …` (refuses a path that is not listed, keeps the session's attribution trailer, runs the pre-commit gate, never `--no-verify`) | actrepo |
+| `git pull`, `git fetch && git merge --ff-only` | `actrepo pull` (fast-forward only; refuses when incoming files overlap a dirty file, naming it; never switches the branch of a checkout) | actrepo |
+| `git push -u origin B` of one named branch from a worktree, the gate output kept, the result checked afterwards | `actrepo push --branch B` (today `actrepo push` takes a repository and its nested ones, clean tree only); the result is read back with `branch remote`, not from an exit code | actrepo |
 | `git worktree add .worktrees/X -b BRANCH origin/main` | `actrepo worktree add BRANCH [--from origin/main]` | actrepo |
 | `git fetch`, `git ls-remote --heads origin B` | `actrepo branch remote B` (is it pushed, at which sha) | actrepo |
 | `git branch -d B`, `git worktree remove --force` (generated files only) | `actrepo worktree remove`, `actrepo branch delete --merged` | actrepo |
