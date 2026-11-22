@@ -129,6 +129,6 @@ names (`iid`, `detailed_merge_status`, `has_conflicts`, `path_with_namespace`,
 ## Develop
 
 ```text
-dotfiles heavy run --medium -- cargo test
-dotfiles heavy run --medium -- cargo clippy --all-targets -- -D warnings
+actqueue run --medium -- cargo test
+actqueue run --medium -- cargo clippy --all-targets -- -D warnings
 ```
