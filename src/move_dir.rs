@@ -324,6 +324,8 @@ pub fn with_defaults(plan: &mut Plan, cargo_home: &Path) {
         ]
         .map(|f| claude.join(f)),
     );
+    // Codex keeps its trusted projects as `[projects."<absolute path>"]` in one user-wide file.
+    plan.files.push(plan.home.join(".codex/config.toml"));
     for list in [
         &mut plan.roots,
         &mut plan.fleets,
@@ -977,6 +979,7 @@ mod tests {
         assert_eq!(p.children, [home.join(".claude/projects")]);
         assert!(p.files.contains(&home.join(".cargo/.crates.toml")));
         assert!(p.files.contains(&home.join(".claude/CLAUDE.md")));
+        assert!(p.files.contains(&home.join(".codex/config.toml")));
         fs::remove_dir_all(&b).unwrap();
     }
 
