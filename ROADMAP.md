@@ -1,0 +1,46 @@
+# Roadmap
+
+## Directive (owner, 2026-11-23): `actrepo` and `actautoma` handle every git and gh workflow
+
+Every workflow an agent or the owner runs with `git` or `gh` goes through
+`actrepo` or `actautoma`; raw `git` / `gh` stays only for what they lack, and
+each such use names the missing verb so it can be added here.
+
+Proposed split (mine, to confirm with the owner): `actrepo` holds the single
+verbs on a repository, its branches, worktrees and pull requests; `actautoma`
+holds the workflows that chain several of them (ship, merge a stack, report a
+problem upstream). Both stay thin over `git` and `gh`, with the strictness of
+the rest of the doctrine (no silent failure, a refusal names what and why).
+
+### Verbs missing today (found by shipping 30 PRs on 2026-11-22/23 with raw commands)
+
+`actrepo` has `pr create`, `pr merge`, `push`, `worktree list|prune`, `status`.
+Used by hand instead:
+
+| Raw command | Wanted verb | Owner |
+|---|---|---|
+| `git worktree add .worktrees/X -b BRANCH origin/main` | `actrepo worktree add BRANCH [--from origin/main]` | actrepo |
+| `git fetch`, `git ls-remote --heads origin B` | `actrepo branch remote B` (is it pushed, at which sha) | actrepo |
+| `git branch -d B`, `git worktree remove --force` (generated files only) | `actrepo worktree remove`, `actrepo branch delete --merged` | actrepo |
+| `gh pr view N --json state,mergeable,baseRefName` | `actrepo pr view N` | actrepo |
+| `gh pr list --state open --json …` | `actrepo pr list` | actrepo |
+| `gh pr edit N --base main` | `actrepo pr retarget N --base main` | actrepo |
+| `gh pr close N --comment …` | `actrepo pr close N [--comment]` | actrepo |
+| `git merge-tree --write-tree BASE HEAD` | `actrepo pr check N` (conflict dry run) | actrepo |
+| merge `origin/main` in a detached worktree, fix, `git push origin HEAD:B` | `actautoma resolve-conflicts N` (worktree, merge, stop on conflict, push) | actautoma |
+| push, `actrepo pr create` with the last subject, `actrepo pr merge --yes` (`ship.sh`) | `actautoma ship` (gates first, merge only where authorised) | actautoma |
+| stacked PRs squash-merged: retarget the tip, dry run, merge, close the contained ones | `actautoma merge-stack` | actautoma |
+| `gh issue create`, `gh search issues`, `gh repo fork` for a problem found upstream | `actautoma report-upstream` | actautoma |
+| `actrepo pr merge` then restore a peer's checkout it switched to `main` | `actrepo pr merge --keep-checkout` (never switch a checkout that is not the merger's) | actrepo |
+
+Known defects seen while shipping (to fix, test first): `actrepo pr merge`
+switched peers' checkouts to `main`; it reports "PR merged, but the local
+update is incomplete" when the worktree holds untracked generated files and
+leaves the worktree behind (nothing says which file blocks it).
+
+### Order
+
+1. Read-only verbs first (`pr view`, `pr list`, `branch remote`, `pr check`): additive, no risk.
+2. Then the writing single verbs (`worktree add|remove`, `pr retarget|close`).
+3. Then the `actautoma` workflows, each with its own ADR (what it may do alone, what stops it).
+4. Then a rule in `~/.claude/AGENTS.md` (dotfiles) that makes raw `git`/`gh` the exception. The rule text is proposed in the dotfiles pull request of the same day.
