@@ -41,6 +41,10 @@ switched peers' checkouts to `main`; it reports "PR merged, but the local
 update is incomplete" when the worktree holds untracked generated files and
 leaves the worktree behind (nothing says which file blocks it).
 
+### Bulk case (owner, 2026-11-23): several pushes and several pulls at once
+
+`actautoma sync-all` settles the case of 3 pushes and 3 pulls pending without a human sequencing them. It calls `actrepo sync` (the per-branch verb: push ahead, fast-forward pull behind, report diverged and dirty), then `resolve-conflicts` for each diverged branch, then `ship` where merging is authorised (`openacte` repositories only). Every item is attempted, each outcome is read back, one report line per item, non-zero exit when any item failed. Own ADR before code; full design in `actrepo/ROADMAP.md` ("Bulk case"). It needs `actrepo pull`, `push --branch` and `branch remote` first.
+
 ### Order
 
 1. Read-only verbs first (`pr view`, `pr list`, `branch remote`, `pr check`): additive, no risk.
