@@ -1,8 +1,8 @@
 //! The `gh` (GitHub) adapter of [`Forge`].
 
 use crate::forge::{
-    fields, parse_open_prs, parse_repo, CiRun, Error, Forge, Mergeable, NewPullRequest, NewRepo,
-    OpenPr, PullRequest, Repo, RepoSearch, Runner,
+    fields, parse_open_prs, parse_repo, CiRun, Error, Forge, Mergeable, NewPullRequest, NewRelease,
+    NewRepo, OpenPr, PullRequest, Repo, RepoSearch, Runner,
 };
 use std::path::{Path, PathBuf};
 
@@ -191,6 +191,24 @@ impl<R: Runner> Forge for Gh<R> {
     fn rename_repo(&self, slug: &str, new_name: &str) -> Result<(), Error> {
         self.gh(&["repo", "rename", new_name, "--repo", slug, "--yes"])
             .map(drop)
+    }
+
+    fn create_release(&self, r: &NewRelease) -> Result<(), Error> {
+        let mut args: Vec<String> = ["release", "create", &r.tag, "--repo", &r.slug]
+            .map(String::from)
+            .to_vec();
+        args.extend([
+            "--title".into(),
+            r.title.clone(),
+            "--notes".into(),
+            r.notes.clone(),
+        ]);
+        if r.prerelease {
+            args.push("--prerelease".into());
+        }
+        args.extend(r.asset.iter().map(|a| a.display().to_string()));
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        self.gh(&args).map(drop)
     }
 
     fn repo_exists(&self, owner: &str, name: &str) -> Result<bool, Error> {
@@ -412,6 +430,59 @@ mod tests {
         let f = Fake::answering(vec![Err(Error::Run("name already taken".into()))]);
         let err = Gh::new(&f).rename_repo("me/old", "new").unwrap_err();
         assert_eq!(err, Error::Run("name already taken".into()));
+    }
+
+    fn release(prerelease: bool, asset: Option<&str>) -> NewRelease {
+        NewRelease {
+            slug: "me/tap".into(),
+            tag: "v1.0.0-beta.3".into(),
+            title: "Beta 3".into(),
+            notes: "n".into(),
+            prerelease,
+            asset: asset.map(PathBuf::from),
+        }
+    }
+
+    #[test]
+    fn create_release_publishes_a_prerelease_with_its_asset() {
+        let f = Fake::answering(vec![Ok(String::new())]);
+        Gh::new(&f)
+            .create_release(&release(true, Some("/s/A-1.dmg")))
+            .unwrap();
+        assert_eq!(
+            f.call(0).1,
+            [
+                "release",
+                "create",
+                "v1.0.0-beta.3",
+                "--repo",
+                "me/tap",
+                "--title",
+                "Beta 3",
+                "--notes",
+                "n",
+                "--prerelease",
+                "/s/A-1.dmg"
+            ]
+        );
+    }
+
+    #[test]
+    fn create_release_without_prerelease_or_asset_passes_neither() {
+        let f = Fake::answering(vec![Ok(String::new())]);
+        Gh::new(&f).create_release(&release(false, None)).unwrap();
+        let args = f.call(0).1;
+        assert!(!args.contains(&"--prerelease".to_string()));
+        assert_eq!(args.last().map(String::as_str), Some("n"));
+    }
+
+    #[test]
+    fn create_release_surfaces_the_tool_failure() {
+        let f = Fake::answering(vec![Err(Error::Run("tag exists".into()))]);
+        let err = Gh::new(&f)
+            .create_release(&release(true, None))
+            .unwrap_err();
+        assert_eq!(err, Error::Run("tag exists".into()));
     }
 
     #[test]

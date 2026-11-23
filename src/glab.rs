@@ -443,6 +443,18 @@ mod tests {
             glab.rename_repo("me/a", "b"),
             Err(Error::Unsupported(_))
         ));
+        let release = crate::forge::NewRelease {
+            slug: "me/a".into(),
+            tag: "v1".into(),
+            title: "t".into(),
+            notes: String::new(),
+            prerelease: true,
+            asset: None,
+        };
+        assert!(matches!(
+            glab.create_release(&release),
+            Err(Error::Unsupported(_))
+        ));
         assert!(
             f.calls_len() == 0,
             "an unsupported operation must not run anything"
