@@ -9,6 +9,7 @@ pub mod glab;
 pub mod install_records;
 pub mod move_dir;
 pub mod process;
+pub mod pulls;
 pub mod realign_fs;
 pub mod registry;
 pub mod rename;
