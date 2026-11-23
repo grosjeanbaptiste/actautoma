@@ -4,6 +4,22 @@ Rust library that handles the tools of repository-hosting platforms (`gh` for
 GitHub, `glab` for GitLab, and others). The `gh` adapter exists; this README
 states what exists today and grows with the API.
 
+## Contents
+
+- [How it works](#how-it-works)
+- [Install](#install)
+- [API](#api)
+- [Develop](#develop)
+
+## How it works
+
+```mermaid
+flowchart LR
+    callers["appelants (binaire rename-repo, autres crates)"] --> lib["actautoma"]
+    lib --> gh["adaptateur gh"]
+    gh --> cli["gh (GitHub)"]
+```
+
 ## Install
 
 Needs Rust (`rustup`). `actautoma` is a library with one small binary (`rename-repo`, below).
