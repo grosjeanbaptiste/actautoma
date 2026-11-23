@@ -112,6 +112,20 @@ pub struct NewRepo {
     pub push: bool,
 }
 
+/// A release to publish on a hosted repository.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewRelease {
+    /// `owner/name`.
+    pub slug: String,
+    pub tag: String,
+    pub title: String,
+    pub notes: String,
+    /// A prerelease is never the repository's "latest" release.
+    pub prerelease: bool,
+    /// File attached to the release, uploaded under its own file name.
+    pub asset: Option<PathBuf>,
+}
+
 /// What a search of repository names found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoSearch {
@@ -156,6 +170,10 @@ pub trait Forge {
     /// Whether repository `owner/name` exists; a platform error is not `false`.
     fn repo_exists(&self, _owner: &str, _name: &str) -> Result<bool, Error> {
         Err(Error::Unsupported("repo_exists".into()))
+    }
+    /// Publishes a release (and its asset) on repository `release.slug`.
+    fn create_release(&self, _release: &NewRelease) -> Result<(), Error> {
+        Err(Error::Unsupported("create_release".into()))
     }
     /// Repositories, under any owner, whose name matches `text` (first page, best first).
     fn search_repos(&self, _text: &str) -> Result<RepoSearch, Error> {

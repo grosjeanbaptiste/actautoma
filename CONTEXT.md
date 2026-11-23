@@ -7,6 +7,10 @@ title. Each fact names its source (file, commit, message) so it can be
 re-checked; anything not yet verified is marked "unverified". No secrets,
 tokens or personal identifiers here.
 
+## Decisions
+
+- 2026-11-23 (branch `feat/create-release`): `Forge::create_release(&NewRelease)` added (default `Unsupported`; `Gh` runs `gh release create <tag> --repo <slug> --title --notes [--prerelease] [asset]`; `Glab` stays unsupported). Reason: `actrepo` never runs `gh` itself and its Homebrew beta needs a prerelease with a dmg. Source: `src/forge.rs`, `src/gh.rs` tests. 167 tests green, clippy `-D warnings` clean, `cargo mutants -F create_release`: 1 caught. Consumers to bump the pin: `actrepo`, `actit` (same actautoma revision in both).
+
 ## Deadlines
 
 | Date | What | Status |
