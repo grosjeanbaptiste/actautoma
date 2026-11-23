@@ -43,7 +43,7 @@ impl<R: Runner> Gh<R> {
         self
     }
 
-    fn gh(&self, args: &[&str]) -> Result<String, Error> {
+    pub(crate) fn gh(&self, args: &[&str]) -> Result<String, Error> {
         self.runner.run(&self.program, args, self.dir.as_deref())
     }
 }
