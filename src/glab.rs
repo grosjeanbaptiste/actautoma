@@ -40,7 +40,7 @@ impl<R: Runner> Glab<R> {
         self
     }
 
-    fn glab(&self, args: &[&str]) -> Result<String, Error> {
+    pub(crate) fn glab(&self, args: &[&str]) -> Result<String, Error> {
         self.runner.run(&self.program, args, self.dir.as_deref())
     }
 }
@@ -102,6 +102,7 @@ impl<R: Runner> Forge for Glab<R> {
     }
 
     fn merge_pr(&self, number: u64) -> Result<(), Error> {
+        self.backup_mr_branch(number)?; // never merge without the copy
         let n = number.to_string();
         self.glab(&["mr", "merge", &n, "--remove-source-branch", "--yes"])
             .map(drop)
@@ -301,10 +302,14 @@ mod tests {
 
     #[test]
     fn merge_pr_merges_and_removes_the_source_branch() {
-        let f = Fake::answering(vec![Ok(String::new())]);
+        let f = Fake::answering(vec![
+            Ok("feat\u{1f}abc123\n".into()),
+            Ok(String::new()),
+            Ok(String::new()),
+        ]);
         Glab::new(&f).merge_pr(8).unwrap();
         assert_eq!(
-            f.call(0).1,
+            f.call(2).1,
             ["mr", "merge", "8", "--remove-source-branch", "--yes"]
         );
     }
@@ -409,15 +414,21 @@ mod tests {
 
     #[test]
     fn program_and_directory_are_settings_not_constants() {
-        let f = Fake::answering(vec![Ok(String::new())]);
+        let f = Fake::answering(vec![
+            Ok("feat\u{1f}abc123\n".into()),
+            Ok(String::new()),
+            Ok(String::new()),
+        ]);
         Glab::new(&f)
             .program("/opt/glab")
             .in_dir("/work/r")
             .merge_pr(1)
             .unwrap();
-        let (program, _, dir) = f.call(0);
-        assert_eq!(program, "/opt/glab");
-        assert_eq!(dir, Some(PathBuf::from("/work/r")));
+        for i in 0..3 {
+            let (program, _, dir) = f.call(i);
+            assert_eq!(program, "/opt/glab", "call {i}");
+            assert_eq!(dir, Some(PathBuf::from("/work/r")), "call {i}");
+        }
     }
 
     #[test]
