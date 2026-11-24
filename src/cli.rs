@@ -144,6 +144,50 @@ fn rename_family(args: &[String], cwd: &Path, out: &mut dyn Write) -> Result<(),
 
 /// Run `actautoma <args>` in `cwd`; the report goes to `out`. `forge` renames on the platform,
 /// `runner` runs `git`, `env` reads `HOME` and `CARGO_HOME`.
+const SHIP_USAGE: &str =
+    "usage: actautoma ship [--gate \"PROGRAM ARGS\"] [--no-merge] [--body TEXT]";
+
+/// `actautoma ship`: see [`crate::ship`].
+fn ship_verb(
+    args: &[String],
+    cwd: &Path,
+    forge: &impl Forge,
+    runner: &impl Runner,
+    out: &mut dyn Write,
+) -> Result<(), Error> {
+    let mut options = crate::ship::Options {
+        gate: None,
+        merge: true,
+        body: None,
+    };
+    let mut it = args.iter().skip(1);
+    while let Some(flag) = it.next() {
+        match flag.as_str() {
+            "--gate" => {
+                let words = it.next().ok_or_else(|| fail(SHIP_USAGE))?;
+                let words: Vec<String> = words.split_whitespace().map(str::to_owned).collect();
+                if words.is_empty() {
+                    return Err(fail(SHIP_USAGE));
+                }
+                options.gate = Some(words);
+            }
+            "--body" => options.body = Some(it.next().ok_or_else(|| fail(SHIP_USAGE))?.clone()),
+            "--no-merge" => options.merge = false,
+            other => return Err(fail(&format!("unknown option {other}\n{SHIP_USAGE}"))),
+        }
+    }
+    match crate::ship::ship(forge, runner, cwd, &options)? {
+        crate::ship::Outcome::Merged { number, url } => {
+            say(out, &format!("merged #{number} {url}"))
+        }
+        crate::ship::Outcome::Held {
+            number,
+            url,
+            reason,
+        } => say(out, &format!("held #{number} {url}: {reason}")),
+    }
+}
+
 pub fn dispatch(
     args: &[String],
     cwd: &Path,
@@ -157,6 +201,9 @@ pub fn dispatch(
     }
     if args.first().map(String::as_str) == Some("move") {
         return crate::move_dir::run(args, cwd, env, runner, out);
+    }
+    if args.first().map(String::as_str) == Some("ship") {
+        return ship_verb(args, cwd, forge, runner, out);
     }
     if args.first().map(String::as_str) == Some("rename-file") {
         return crate::rename_file::run(args, cwd, runner, out);
@@ -216,6 +263,14 @@ mod tests {
         }
         assert!(out.is_empty());
         fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn ship_refuses_an_unknown_option_and_a_gate_without_a_command() {
+        refused(&["ship", "--force"], "unknown option --force");
+        refused(&["ship", "--gate"], "usage: actautoma ship");
+        refused(&["ship", "--gate", "  "], "usage: actautoma ship");
+        refused(&["ship", "--body"], "usage: actautoma ship");
     }
 
     #[test]

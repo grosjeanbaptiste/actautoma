@@ -46,6 +46,20 @@ encoded old folder. When the moved project's root `Cargo.toml` names its package
 platform (it already has the new name); `--dry-run` prints the rewrites and changes nothing.
 On this machine, `dotfiles project rename OWNER/OLD NEW` supplies the roots.
 
+### Shipping a branch
+
+```text
+actautoma ship [--gate "PROGRAM ARGS"] [--no-merge] [--body TEXT]
+```
+
+Run in a feature branch with a clean tree: runs the gate, pushes the branch, opens its pull request
+(the last commit's subject and body) and **merges it only when it is safe**: the gate ran green,
+the platform says `MERGEABLE` and the merge state is `CLEAN` (no conflict, branch up to date,
+nothing blocking). Otherwise it prints `held #N URL: reason` and leaves the pull request open.
+Without `--gate` nothing is merged. On the default branch or with uncommitted changes it refuses.
+`acteble_api` and `melos_apps` are never merged by it (`ship::NEVER_MERGED`), whatever the owner:
+the pull request is opened and held.
+
 ### Renaming a file
 
 ```text
