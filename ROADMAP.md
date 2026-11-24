@@ -31,7 +31,7 @@ Used by hand instead:
 | `gh pr close N --comment …` | `actrepo pr close N [--comment]` | actrepo |
 | `git merge-tree --write-tree BASE HEAD` | `actrepo pr check N` (conflict dry run) | actrepo |
 | merge `origin/main` in a detached worktree, fix, `git push origin HEAD:B` | `actautoma resolve-conflicts N` (worktree, merge, stop on conflict, push) | actautoma |
-| push, `actrepo pr create` with the last subject, `actrepo pr merge --yes` (`ship.sh`) | `actautoma ship` (gates first, merge only where authorised) | actautoma |
+| push, `actrepo pr create` with the last subject, `actrepo pr merge --yes` (`ship.sh`) | `actautoma ship` (gates first, merge only where authorised) — built 2026-11-24: green gate + `MERGEABLE` + `CLEAN`; never in `acteble_api`, `melos_apps` | actautoma |
 | stacked PRs squash-merged: retarget the tip, dry run, merge, close the contained ones | `actautoma merge-stack` | actautoma |
 | `gh issue create`, `gh search issues`, `gh repo fork` for a problem found upstream | `actautoma report-upstream` | actautoma |
 | `actrepo pr merge` then restore a peer's checkout it switched to `main` | `actrepo pr merge --keep-checkout` (never switch a checkout that is not the merger's) | actrepo |
