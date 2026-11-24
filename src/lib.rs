@@ -1,6 +1,7 @@
 //! actautoma — TODO: describe the crate.
 
 pub mod binary;
+pub mod branches;
 pub mod cli;
 pub mod family;
 pub mod forge;
