@@ -5,6 +5,7 @@ pub mod cli;
 pub mod family;
 pub mod forge;
 pub mod gh;
+mod gh_backup;
 pub mod glab;
 pub mod install_records;
 pub mod move_dir;

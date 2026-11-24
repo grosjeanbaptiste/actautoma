@@ -141,7 +141,7 @@ pub trait Forge {
     fn view_pr(&self, number: Option<u64>) -> Result<PullRequest, Error>;
     /// Opens a pull request and returns its URL.
     fn create_pr(&self, pr: &NewPullRequest) -> Result<String, Error>;
-    /// Merges pull request `number` and deletes its branch.
+    /// Copies the branch of pull request `number` (a remote `refs/backup/<branch>/<tip>` ref where the adapter supports it), merges it, and deletes its branch. A failing copy stops before the merge.
     fn merge_pr(&self, number: u64) -> Result<(), Error>;
     /// The hosted repository of the working directory.
     fn view_repo(&self) -> Result<Repo, Error>;
