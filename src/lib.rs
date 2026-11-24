@@ -7,6 +7,7 @@ pub mod forge;
 pub mod gh;
 mod gh_backup;
 pub mod glab;
+mod glab_backup;
 pub mod install_records;
 pub mod move_dir;
 pub mod process;
