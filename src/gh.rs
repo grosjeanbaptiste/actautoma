@@ -87,6 +87,7 @@ impl<R: Runner> Forge for Gh<R> {
 
     fn merge_pr(&self, number: u64) -> Result<(), Error> {
         let n = number.to_string();
+        self.backup_pr_branch(number)?; // never merge without the copy
         self.gh(&["pr", "merge", &n, "--merge", "--delete-branch"])
             .map(drop)
     }
@@ -345,23 +346,35 @@ mod tests {
 
     #[test]
     fn merge_pr_merges_and_deletes_the_branch() {
-        let f = Fake::answering(vec![Ok(String::new())]);
+        let f = Fake::answering(vec![
+            Ok("feat\u{1f}abc\n".into()),
+            Ok(String::new()),
+            Ok(String::new()),
+        ]);
         Gh::new(&f).merge_pr(8).unwrap();
         assert_eq!(
-            f.call(0).1,
+            f.call(2).1,
             ["pr", "merge", "8", "--merge", "--delete-branch"]
         );
     }
 
     #[test]
     fn merge_failure_reaches_the_caller() {
-        let f = Fake::answering(vec![Err(Error::Run("conflict".into()))]);
+        let f = Fake::answering(vec![
+            Ok("feat\u{1f}abc\n".into()),
+            Ok(String::new()),
+            Err(Error::Run("conflict".into())),
+        ]);
         assert_eq!(Gh::new(&f).merge_pr(8), Err(Error::Run("conflict".into())));
     }
 
     #[test]
     fn program_and_directory_are_settings_not_constants() {
-        let f = Fake::answering(vec![Ok(String::new())]);
+        let f = Fake::answering(vec![
+            Ok("feat\u{1f}abc\n".into()),
+            Ok(String::new()),
+            Ok(String::new()),
+        ]);
         Gh::new(&f)
             .program("/opt/gh")
             .in_dir("/work/r")

@@ -9,6 +9,8 @@ tokens or personal identifiers here.
 
 ## Decisions
 
+- 2026-11-24 (branch `feat/merge-backup-ref`, owner's rule: always copy the original before a merge): `Gh::merge_pr` first pins the PR branch tip as the remote ref `refs/backup/<branch>/<tip>` (`gh api repos/{owner}/{repo}/git/refs`, source `src/gh_backup.rs`) and merges only if that succeeded; a copy that already exists (same tip, merge retried) counts as done. Every caller of `Forge::merge_pr` gets it (today: `actrepo pr merge`). **Gap:** `Glab::merge_pr` has no copy yet (GitLab has no custom ref namespace through `glab api` verified here); it merges as before. 164 tests green, clippy `-D warnings` and fmt clean, `cargo mutants --file src/gh_backup.rs`: 7 caught, 0 missed.
+
 - 2026-11-23 (branch `feat/create-release`): `Forge::create_release(&NewRelease)` added (default `Unsupported`; `Gh` runs `gh release create <tag> --repo <slug> --title --notes [--prerelease] [asset]`; `Glab` stays unsupported). Reason: `actrepo` never runs `gh` itself and its Homebrew beta needs a prerelease with a dmg. Source: `src/forge.rs`, `src/gh.rs` tests. 167 tests green, clippy `-D warnings` clean, `cargo mutants -F create_release`: 1 caught. Consumers to bump the pin: `actrepo`, `actit` (same actautoma revision in both).
 
 ## Deadlines
