@@ -5,6 +5,8 @@
 //! to date, nothing blocking). Anything else stops after the pull request is open and says why.
 //! Repositories in [`NEVER_MERGED`] are never merged by it, whatever their state.
 
+use std::time::Duration;
+
 use crate::forge::{Error, Forge, Mergeable, NewPullRequest, Runner};
 use std::path::Path;
 
@@ -21,7 +23,12 @@ pub struct Options {
     pub merge: bool,
     /// The pull request body; the last commit's body when absent.
     pub body: Option<String>,
+    /// Pause between reads while the platform still computes mergeability.
+    pub settle: Duration,
 }
+
+/// Reads of the pull request while the platform answers UNKNOWN.
+const SETTLE_READS: u32 = 8;
 
 /// Where `ship` stopped.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,7 +131,14 @@ pub fn ship(
         Err(Error::Run(m)) if m.contains("already exists") => String::new(),
         Err(e) => return Err(e),
     };
-    let pr = forge.view_pr(None)?;
+    let mut pr = forge.view_pr(None)?;
+    for _ in 1..SETTLE_READS {
+        if pr.mergeable != Mergeable::Unknown {
+            break;
+        }
+        std::thread::sleep(options.settle);
+        pr = forge.view_pr(None)?;
+    }
     let name = repo.slug.rsplit('/').next().unwrap_or(&repo.slug);
     if let Some(reason) = hold(options, name, &pr.mergeable, &pr.merge_state) {
         return Ok(Outcome::Held {

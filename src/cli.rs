@@ -159,6 +159,7 @@ fn ship_verb(
         gate: None,
         merge: true,
         body: None,
+        settle: std::time::Duration::from_secs(4),
     };
     let mut it = args.iter().skip(1);
     while let Some(flag) = it.next() {
