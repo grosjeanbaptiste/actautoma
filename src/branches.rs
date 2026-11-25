@@ -123,11 +123,62 @@ pub enum CatchUp {
     Conflict { files: Vec<String>, backup: String },
     /// Tracked files have uncommitted changes: nothing was touched.
     Dirty { files: Vec<String> },
+    /// Diverged, additive conflicts settled by keeping both sides in `files`.
+    Resolved {
+        commits: usize,
+        backup: String,
+        files: Vec<String>,
+    },
+    /// The replay finished but the gate failed: the branch is back as it was.
+    GateFailed { backup: String, output: String },
+}
+
+/// What `catch_up_with` may do beyond a clean replay.
+#[derive(Debug, Clone, Default)]
+pub struct Options {
+    /// Settle a conflict by keeping both sides of every conflicting hunk.
+    pub union: bool,
+    /// A shell command run in the repository after the replay; when it fails
+    /// the branch is put back to the copy.
+    pub gate: Option<String>,
+}
+
+/// A conflicted file with both sides kept, HEAD's lines first. `None` when it
+/// holds no conflict marker: a deleted or renamed file is not guessed.
+pub fn keep_both(text: &str) -> Option<String> {
+    if !text.lines().any(|l| l.starts_with("<<<<<<< ")) {
+        return None;
+    }
+    let mut kept = String::new();
+    let mut in_base = false;
+    for line in text.split_inclusive('\n') {
+        if line.starts_with("<<<<<<< ")
+            || line.starts_with("=======")
+            || line.starts_with(">>>>>>> ")
+        {
+            in_base = false;
+        } else if line.starts_with("||||||| ") {
+            in_base = true;
+        } else if !in_base {
+            kept.push_str(line);
+        }
+    }
+    Some(kept)
 }
 
 /// Bring the checked-out branch onto `origin/<base>`, copying the original
 /// first as the local branch `backup/<branch>/<tip>`. It pushes nothing.
 pub fn catch_up(runner: &dyn Runner, dir: &Path, base: &str) -> Result<CatchUp, Error> {
+    catch_up_with(runner, dir, base, &Options::default())
+}
+
+/// `catch_up` with its options: settle additive conflicts, gate the result.
+pub fn catch_up_with(
+    runner: &dyn Runner,
+    dir: &Path,
+    base: &str,
+    options: &Options,
+) -> Result<CatchUp, Error> {
     let dirty = git(
         runner,
         dir,
@@ -179,16 +230,71 @@ pub fn catch_up(runner: &dyn Runner, dir: &Path, base: &str) -> Result<CatchUp, 
     let tip = git(runner, dir, &["rev-parse", "HEAD"])?;
     let backup = format!("backup/{branch}/{tip}");
     git(runner, dir, &["branch", &backup, &tip])?;
-    let (_, files) = merge_result(runner, dir, "HEAD", &remote)?;
-    if !files.is_empty() {
-        return Ok(CatchUp::Conflict { files, backup });
+    let (_, conflicting) = merge_result(runner, dir, "HEAD", &remote)?;
+    if !conflicting.is_empty() && !options.union {
+        return Ok(CatchUp::Conflict {
+            files: conflicting,
+            backup,
+        });
     }
+    let mut resolved: Vec<String> = Vec::new();
     if let Err(error) = git(runner, dir, &["rebase", "-q", &remote]) {
-        let _ = git(runner, dir, &["rebase", "--abort"]);
-        return Err(error);
+        let mut done = false;
+        for _ in 0..=ahead {
+            let files = git(runner, dir, &["diff", "--name-only", "--diff-filter=U"])?;
+            let files: Vec<String> = files.lines().map(String::from).collect();
+            if !options.union || files.is_empty() {
+                break;
+            }
+            for file in &files {
+                let path = dir.join(file);
+                let both = std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|text| keep_both(&text));
+                let Some(both) = both else {
+                    let _ = git(runner, dir, &["rebase", "--abort"]);
+                    return Ok(CatchUp::Conflict { files, backup });
+                };
+                std::fs::write(&path, both)
+                    .map_err(|e| Error::Run(format!("cannot write {file}: {e}")))?;
+                git(runner, dir, &["add", file])?;
+                resolved.push(file.clone());
+            }
+            if git(
+                runner,
+                dir,
+                &["-c", "core.editor=true", "rebase", "--continue"],
+            )
+            .is_ok()
+            {
+                done = true;
+                break;
+            }
+        }
+        if !done {
+            let _ = git(runner, dir, &["rebase", "--abort"]);
+            return Err(error);
+        }
     }
-    Ok(CatchUp::Replayed {
+    if let Some(gate) = &options.gate {
+        if let Err(failure) = runner.run("sh", &["-c", gate], Some(dir)) {
+            git(runner, dir, &["reset", "--hard", &backup])?;
+            return Ok(CatchUp::GateFailed {
+                backup,
+                output: failure.to_string(),
+            });
+        }
+    }
+    if resolved.is_empty() {
+        return Ok(CatchUp::Replayed {
+            commits: ahead,
+            backup,
+        });
+    }
+    resolved.dedup();
+    Ok(CatchUp::Resolved {
         commits: ahead,
         backup,
+        files: resolved,
     })
 }

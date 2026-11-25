@@ -153,3 +153,51 @@ fn dir_and_base_options_are_read_and_unknown_ones_refused() {
         other => panic!("{other:?}"),
     }
 }
+
+fn additive_conflict() -> (PathBuf, String) {
+    let (work, peer) = pair();
+    commit(&work, "a.txt", "one\ntwo\nMINE\nthree\n");
+    let tip = git(&work, &["rev-parse", "HEAD"]);
+    peer_ships(&peer, "a.txt", "one\ntwo\nPEER\nthree\n");
+    (work, tip)
+}
+
+#[test]
+fn union_settles_an_additive_conflict_and_names_the_files() {
+    let (work, tip) = additive_conflict();
+    let (result, out) = catch_up(&work, &["--union"]);
+    result.unwrap();
+    assert_eq!(
+        out,
+        format!("replayed 1 commit(s) on origin/main, kept both sides in a.txt; original kept as backup/main/{tip}\n")
+    );
+}
+
+#[test]
+fn a_failing_gate_is_an_error_and_the_copy_is_named() {
+    let (work, tip) = additive_conflict();
+    let (result, out) = catch_up(&work, &["--union", "--gate", "exit 3"]);
+    match result {
+        Err(Error::Run(m)) => assert!(
+            m.starts_with("gate failed, branch put back as it was; original kept as ")
+                && m.contains(&tip),
+            "{m}"
+        ),
+        other => panic!("{other:?}"),
+    }
+    assert!(out.is_empty());
+}
+
+#[test]
+fn a_passing_gate_is_reported_in_the_line() {
+    let (work, peer) = pair();
+    commit(&work, "mine.txt", "m\n");
+    let tip = git(&work, &["rev-parse", "HEAD"]);
+    peer_ships(&peer, "p.txt", "p\n");
+    let (result, out) = catch_up(&work, &["--gate", "test -f p.txt"]);
+    result.unwrap();
+    assert_eq!(
+        out,
+        format!("replayed 1 commit(s) on origin/main; original kept as backup/main/{tip}\n")
+    );
+}
