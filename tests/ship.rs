@@ -47,6 +47,7 @@ struct Hub {
     merge_state: &'static str,
     mergeable: Mergeable,
     already_open: bool,
+    unknown_reads: std::cell::Cell<u32>,
     merged: RefCell<Vec<u64>>,
     created: RefCell<Vec<NewPullRequest>>,
 }
@@ -58,6 +59,7 @@ impl Hub {
             merge_state: "CLEAN",
             mergeable: Mergeable::Mergeable,
             already_open: false,
+            unknown_reads: std::cell::Cell::new(0),
             merged: RefCell::default(),
             created: RefCell::default(),
         }
@@ -72,7 +74,12 @@ impl Forge for Hub {
             head: "feat/x".into(),
             base: "main".into(),
             author: "me".into(),
-            mergeable: self.mergeable.clone(),
+            mergeable: if self.unknown_reads.get() > 0 {
+                self.unknown_reads.set(self.unknown_reads.get() - 1);
+                Mergeable::Unknown
+            } else {
+                self.mergeable.clone()
+            },
             review: String::new(),
             merge_state: self.merge_state.into(),
         })
@@ -112,6 +119,7 @@ fn options() -> Options {
         gate: Some(vec!["gate".into(), "--all".into()]),
         merge: true,
         body: None,
+        settle: std::time::Duration::ZERO,
     }
 }
 
@@ -239,6 +247,14 @@ fn a_mergeability_not_computed_yet_holds_the_merge() {
     hub.mergeable = Mergeable::Unknown;
     let out = go(&tools, &hub, &options()).unwrap();
     assert!(matches!(out, Outcome::Held { .. }), "{out:?}");
+}
+
+#[test]
+fn a_mergeability_computed_a_moment_later_is_waited_for() {
+    let (tools, hub) = (Tools::new(), Hub::new("me/actindexer"));
+    hub.unknown_reads.set(3);
+    let out = go(&tools, &hub, &options()).unwrap();
+    assert!(matches!(out, Outcome::Merged { .. }), "{out:?}");
 }
 
 #[test]
