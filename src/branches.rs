@@ -109,3 +109,86 @@ pub fn classify(runner: &dyn Runner, dir: &Path, base: &str) -> Result<Vec<Branc
     }
     Ok(all)
 }
+
+/// What `catch_up` did with a branch that may trail its remote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CatchUp {
+    /// Nothing behind the remote; `ahead` commits are still to push.
+    UpToDate { ahead: usize },
+    /// Only behind: the remote's commits were fast-forwarded in.
+    FastForwarded { commits: usize },
+    /// Diverged: the local commits were replayed on the remote.
+    Replayed { commits: usize, backup: String },
+    /// Diverged and the replay would conflict: nothing was touched.
+    Conflict { files: Vec<String>, backup: String },
+    /// Tracked files have uncommitted changes: nothing was touched.
+    Dirty { files: Vec<String> },
+}
+
+/// Bring the checked-out branch onto `origin/<base>`, copying the original
+/// first as the local branch `backup/<branch>/<tip>`. It pushes nothing.
+pub fn catch_up(runner: &dyn Runner, dir: &Path, base: &str) -> Result<CatchUp, Error> {
+    let dirty = git(
+        runner,
+        dir,
+        &["status", "--porcelain", "--untracked-files=no"],
+    )?;
+    if !dirty.is_empty() {
+        let files = dirty
+            .lines()
+            // `git()` trims the output, so the first status code may have lost its leading space
+            .map(|line| {
+                line.trim_start()
+                    .split_once(' ')
+                    .map_or(line, |(_, path)| path)
+                    .trim()
+                    .to_string()
+            })
+            .collect();
+        return Ok(CatchUp::Dirty { files });
+    }
+    git(runner, dir, &["fetch", "-q", "origin"])?;
+    let remote = format!("origin/{base}");
+    let counts = git(
+        runner,
+        dir,
+        &[
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("HEAD...{remote}"),
+        ],
+    )?;
+    let (ahead, behind) = counts
+        .split_once('\t')
+        .and_then(|(a, b)| {
+            Some((
+                a.trim().parse::<usize>().ok()?,
+                b.trim().parse::<usize>().ok()?,
+            ))
+        })
+        .ok_or_else(|| Error::Parse(format!("git rev-list printed {counts:?}")))?;
+    if behind == 0 {
+        return Ok(CatchUp::UpToDate { ahead });
+    }
+    if ahead == 0 {
+        git(runner, dir, &["merge", "-q", "--ff-only", &remote])?;
+        return Ok(CatchUp::FastForwarded { commits: behind });
+    }
+    let branch = git(runner, dir, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let tip = git(runner, dir, &["rev-parse", "HEAD"])?;
+    let backup = format!("backup/{branch}/{tip}");
+    git(runner, dir, &["branch", &backup, &tip])?;
+    let (_, files) = merge_result(runner, dir, "HEAD", &remote)?;
+    if !files.is_empty() {
+        return Ok(CatchUp::Conflict { files, backup });
+    }
+    if let Err(error) = git(runner, dir, &["rebase", "-q", &remote]) {
+        let _ = git(runner, dir, &["rebase", "--abort"]);
+        return Err(error);
+    }
+    Ok(CatchUp::Replayed {
+        commits: ahead,
+        backup,
+    })
+}

@@ -68,6 +68,14 @@ actautoma rename-file OLD NEW [--root DIR]... [--replace FROM TO]... [--dry-run]
 
 Moves one tracked file with `git mv` (run in its folder; the target must not exist and its folder must), then rewrites, under each `--root`, the old file name and the old full path by whole name, and every `--replace FROM TO` pair (for example `ADR-042` to `ADR-043` when an ADR is renumbered). A failing `git mv` stops before any rewrite. `--dry-run` prints the rewrites and changes nothing.
 
+### Catching a branch up
+
+```text
+actautoma catch-up [--base BRANCH] [--dir DIR]
+```
+
+Brings the checked-out branch onto `origin/BRANCH` (default `main`): `fetch`, then up to date (says how many commits are left to push), fast-forward when only behind, or, when diverged, a copy of the original as the local branch `backup/<branch>/<tip>` and a `rebase`. A conflict (files named) or uncommitted tracked changes make it fail and touch nothing. It never pushes, tags or bumps a version. See `docs/adr/0001-catch-up.md`.
+
 ### Moving a folder
 
 ```text

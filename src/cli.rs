@@ -205,6 +205,9 @@ pub fn dispatch(
     if args.first().map(String::as_str) == Some("ship") {
         return ship_verb(args, cwd, forge, runner, out);
     }
+    if args.first().map(String::as_str) == Some("catch-up") {
+        return crate::catch_up::run(args, cwd, runner, out);
+    }
     if args.first().map(String::as_str) == Some("rename-file") {
         return crate::rename_file::run(args, cwd, runner, out);
     }
