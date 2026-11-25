@@ -3,6 +3,7 @@
 pub mod binary;
 pub mod branches;
 pub mod catch_up;
+pub mod clean;
 pub mod cli;
 pub mod family;
 pub mod forge;
