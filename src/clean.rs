@@ -2,9 +2,10 @@
 //!
 //! Only a branch that `branches::classify` calls `Merged` is touched, and only when it was
 //! pushed once (a branch just cut from the base has no commit either, and looks merged), its
-//! worktree is clean and it is not checked out in the main checkout. Everything else is kept
-//! and says why. Unmerged, superseded and conflicting branches are never touched: those are the
-//! owner's call.
+//! worktree is clean and it is not checked out in the main checkout. A superseded branch whose
+//! tree is exactly the base's is removed too, pushed or not: it holds nothing more than the base.
+//! Everything else is kept and says why. Unmerged, other superseded and conflicting branches are
+//! never touched: those are the owner's call.
 
 use crate::branches::{classify, Class};
 use crate::forge::{Error, Runner};
@@ -48,7 +49,15 @@ pub fn clean(runner: &dyn Runner, dir: &Path, base: &str, apply: bool) -> Result
     let trees = worktrees(runner, dir)?;
     let mut steps = Vec::new();
     for b in classify(runner, dir, base)? {
-        if b.class != Class::Merged || b.name.starts_with("origin/") {
+        if b.name.starts_with("origin/") {
+            continue;
+        }
+        // Superseded with the very tree of the base: the branch holds nothing the base lacks,
+        // even when its commits were never pushed or landed another way.
+        let identical = b.class == Class::Superseded
+            && git(runner, dir, &["rev-parse", &format!("{}^{{tree}}", b.name)])?
+                == git(runner, dir, &["rev-parse", &format!("{base}^{{tree}}")])?;
+        if b.class != Class::Merged && !identical {
             continue;
         }
         let name = b.name;
@@ -56,12 +65,13 @@ pub fn clean(runner: &dyn Runner, dir: &Path, base: &str, apply: bool) -> Result
             branch: name.clone(),
             reason: reason.into(),
         };
-        if git(
-            runner,
-            dir,
-            &["config", "--get", &format!("branch.{name}.merge")],
-        )
-        .is_err()
+        if !identical
+            && git(
+                runner,
+                dir,
+                &["config", "--get", &format!("branch.{name}.merge")],
+            )
+            .is_err()
         {
             steps.push(keep("never pushed: cannot tell merged from just cut"));
             continue;
@@ -87,7 +97,12 @@ pub fn clean(runner: &dyn Runner, dir: &Path, base: &str, apply: bool) -> Result
             if let Some(p) = tree {
                 git(runner, dir, &["worktree", "remove", &p.to_string_lossy()])?;
             }
-            git(runner, dir, &["branch", "-d", &name])?;
+            // `-d` refuses a branch git cannot see as merged; an identical tree is the proof here.
+            git(
+                runner,
+                dir,
+                &["branch", if identical { "-D" } else { "-d" }, &name],
+            )?;
             let on_remote = format!("refs/remotes/origin/{name}");
             if git(runner, dir, &["rev-parse", "--verify", "-q", &on_remote]).is_ok() {
                 git(runner, dir, &["push", "origin", "--delete", &name])?;
