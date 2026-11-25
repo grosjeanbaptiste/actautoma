@@ -325,6 +325,7 @@ pub fn catch_up_with(
             backup,
         });
     }
+    resolved.sort();
     resolved.dedup();
     Ok(CatchUp::Resolved {
         commits: ahead,

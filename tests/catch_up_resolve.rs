@@ -207,3 +207,76 @@ fn a_diff3_base_section_is_dropped() {
 fn a_file_without_a_marker_is_not_a_conflict() {
     assert_eq!(keep_both("plain\n"), None);
 }
+
+/// A file that conflicts in two of three replayed commits is named once, and
+/// the files come in a fixed order.
+#[test]
+fn a_file_conflicting_in_two_commits_is_named_once_in_order() {
+    let (work, peer) = pair();
+    commit(&work, "a.txt", "one\ntwo\nthree\nfour\nfive\nsix\nseven\n");
+    commit(&work, "b.txt", "b1\nb2\nb3\n");
+    git(&work, &["push", "-q", "origin", "main"]);
+    git(&peer, &["pull", "-q", "origin", "main"]);
+    commit(
+        &work,
+        "a.txt",
+        "one\ntwo\nMINE1\nthree\nfour\nfive\nsix\nseven\n",
+    );
+    commit(&work, "b.txt", "b1\nb2\nMINEB\nb3\n");
+    commit(
+        &work,
+        "a.txt",
+        "one\ntwo\nMINE1\nthree\nfour\nfive\nsix\nSEVEN-M\n",
+    );
+    commit(
+        &peer,
+        "a.txt",
+        "one\ntwo\nPEER\nthree\nfour\nfive\nsix\nSEVEN-P\n",
+    );
+    commit(&peer, "b.txt", "b1\nb2\nPEERB\nb3\n");
+    git(&peer, &["push", "-q", "origin", "main"]);
+    let outcome = catch_up_with(&ProcessRunner, &work, "main", &union(None)).unwrap();
+    match outcome {
+        CatchUp::Resolved { files, commits, .. } => {
+            assert_eq!(commits, 3);
+            assert_eq!(files, vec!["a.txt".to_string(), "b.txt".to_string()]);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_closer_is_added_only_when_both_sides_leave_a_block_open() {
+    // only HEAD opens a block
+    let text = "<<<<<<< HEAD\n    if a {\n        x\n=======\n    y;\n>>>>>>> o\n    }\n";
+    assert_eq!(
+        keep_both(text).unwrap(),
+        "    if a {\n        x\n    y;\n    }\n"
+    );
+    // only the other side opens a block
+    let text = "<<<<<<< HEAD\n    y;\n=======\n    if b {\n        x\n>>>>>>> o\n    }\n";
+    assert_eq!(
+        keep_both(text).unwrap(),
+        "    y;\n    if b {\n        x\n    }\n"
+    );
+    // neither side opens one
+    let text = "<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> o\n}\n";
+    assert_eq!(keep_both(text).unwrap(), "x\ny\n}\n");
+}
+
+#[test]
+fn a_side_that_closes_as_much_as_it_opens_needs_no_closer() {
+    let text = "<<<<<<< HEAD\n    if a {\n        x\n=======\n    }\n    if b {\n        y\n>>>>>>> o\n    }\n";
+    assert_eq!(
+        keep_both(text).unwrap(),
+        "    if a {\n        x\n    }\n    if b {\n        y\n    }\n"
+    );
+}
+
+#[test]
+fn a_hunk_without_its_closing_marker_does_not_panic() {
+    assert_eq!(
+        keep_both("<<<<<<< HEAD\nx\n=======\ny\n").unwrap(),
+        "x\ny\n"
+    );
+}
