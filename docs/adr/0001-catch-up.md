@@ -19,7 +19,9 @@ A local `main` holds commits that were never pushed while `origin/main` moved on
    6. diverged: **copy the original first** as the local branch `backup/<branch>/<tip>` (owner's rule: always copy the original before a merge), then dry-run with `git merge-tree`; on conflict stop and name the files, the branch untouched; otherwise `git rebase origin/<base>`.
 3. **Outcomes are a closed type:** `UpToDate { ahead }`, `FastForwarded { commits }`, `Replayed { commits, backup }`, `Conflict { files, backup }`, `Dirty { files }`. One report line each; the CLI exits non-zero on `Conflict` and `Dirty`.
 4. **Never outward.** `catch_up` pushes nothing, tags nothing, bumps no version. Publishing stays a separate, authorised act (`ship`).
-5. **Not in this ADR:** the gate run and the version proposal (a later slice, once `sync-all` exists), and any change on `Glab`.
+5. **`--union`** (added 2026-11-25, after the `actconf` case where three files conflicted by both sides adding lines): a conflict is settled by keeping both sides, HEAD's first, and actautoma resumes the replay itself. A conflicted file with no marker (deleted, renamed) is not guessed: the replay is aborted and the outcome is `Conflict`. Outcome `Resolved { commits, backup, files }`.
+6. **`--gate COMMAND`**: run after the replay, in the repository. A union can build code that no longer means what either side meant (a count that must now be 11), so the gate is what makes it safe: when it fails, `git reset --hard backup/<branch>/<tip>` and the outcome is `GateFailed`.
+7. **Not in this ADR:** the next-version proposal (a later slice, once `sync-all` exists), and any change on `Glab`.
 
 ## Consequences
 
