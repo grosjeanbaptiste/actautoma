@@ -178,3 +178,49 @@ fn a_dry_run_reports_and_deletes_nothing() {
         branch: "feat/dry".into()
     }));
 }
+
+#[test]
+fn a_branch_never_pushed_whose_tree_is_the_base_is_removed_with_its_worktree() {
+    let dir = repo();
+    let wt = dir.join(".worktrees/feat/same");
+    git(
+        &dir,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feat/same",
+            wt.to_str().unwrap(),
+            "main",
+        ],
+    );
+    commit(&wt, "f.txt", "same\n", "work, never pushed");
+    commit(
+        &dir,
+        "f.txt",
+        "same\n",
+        "the same work, landed on main by another way",
+    );
+    git(&dir, &["push", "-q", "origin", "main"]);
+
+    let steps = clean(&ProcessRunner, &dir, "main", true).unwrap();
+
+    assert!(!wt.exists(), "worktree still there");
+    assert!(!has_local(&dir, "feat/same"));
+    assert!(steps.contains(&Step::Removed {
+        branch: "feat/same".into()
+    }));
+}
+
+#[test]
+fn a_branch_never_pushed_with_work_the_base_lacks_is_kept() {
+    let dir = repo();
+    git(&dir, &["checkout", "-q", "-b", "feat/lonely", "main"]);
+    commit(&dir, "l.txt", "l\n", "unpushed work");
+    git(&dir, &["checkout", "-q", "main"]);
+
+    clean(&ProcessRunner, &dir, "main", true).unwrap();
+
+    assert!(has_local(&dir, "feat/lonely"));
+}
