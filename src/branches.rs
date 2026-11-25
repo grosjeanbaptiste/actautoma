@@ -143,25 +143,59 @@ pub struct Options {
     pub gate: Option<String>,
 }
 
+/// `{` minus `}` in some lines: a block left open when positive.
+fn open_blocks(lines: &[&str]) -> i64 {
+    lines
+        .iter()
+        .flat_map(|line| line.chars())
+        .map(|c| match c {
+            '{' => 1,
+            '}' => -1,
+            _ => 0,
+        })
+        .sum()
+}
+
 /// A conflicted file with both sides kept, HEAD's lines first. `None` when it
-/// holds no conflict marker: a deleted or renamed file is not guessed.
+/// holds no conflict marker: a deleted or renamed file is not guessed. When
+/// both sides leave a block open, git shared the line that closes it: that
+/// line is repeated after the first side so both blocks are closed.
 pub fn keep_both(text: &str) -> Option<String> {
     if !text.lines().any(|l| l.starts_with("<<<<<<< ")) {
         return None;
     }
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
     let mut kept = String::new();
-    let mut in_base = false;
-    for line in text.split_inclusive('\n') {
-        if line.starts_with("<<<<<<< ")
-            || line.starts_with("=======")
-            || line.starts_with(">>>>>>> ")
-        {
-            in_base = false;
-        } else if line.starts_with("||||||| ") {
-            in_base = true;
-        } else if !in_base {
-            kept.push_str(line);
+    let mut index = 0;
+    while index < lines.len() {
+        if !lines[index].starts_with("<<<<<<< ") {
+            kept.push_str(lines[index]);
+            index += 1;
+            continue;
         }
+        let (mut ours, mut theirs) = (Vec::new(), Vec::new());
+        let (mut side, mut in_base) = (0, false);
+        index += 1;
+        while index < lines.len() && !lines[index].starts_with(">>>>>>> ") {
+            let line = lines[index];
+            if line.starts_with("||||||| ") {
+                in_base = true;
+            } else if line.starts_with("=======") {
+                (side, in_base) = (1, false);
+            } else if !in_base {
+                [&mut ours, &mut theirs][side].push(line);
+            }
+            index += 1;
+        }
+        index += 1; // the closing marker
+        kept.extend(ours.iter().copied());
+        let shared_closer = lines.get(index).filter(|l| l.trim_start().starts_with('}'));
+        if let Some(closer) = shared_closer {
+            if open_blocks(&ours) > 0 && open_blocks(&theirs) > 0 {
+                kept.push_str(closer);
+            }
+        }
+        kept.extend(theirs.iter().copied());
     }
     Some(kept)
 }

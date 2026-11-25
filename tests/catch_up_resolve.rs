@@ -177,3 +177,33 @@ fn a_conflict_found_only_during_the_replay_is_not_settled_without_union() {
     assert_eq!(git(&work, &["rev-parse", "HEAD"]), original);
     assert_eq!(git(&work, &["status", "--porcelain"]), "");
 }
+
+use actautoma::branches::keep_both;
+
+/// Git shares the closing line of two blocks added at the same place: each side
+/// alone is balanced by it, both together are not. The first side is closed.
+#[test]
+fn two_blocks_sharing_their_closing_line_are_both_closed() {
+    let text = "fn f() {\n<<<<<<< HEAD\n    if a {\n        x\n=======\n    if b {\n        y\n>>>>>>> origin/main\n    }\n}\n";
+    assert_eq!(
+        keep_both(text).unwrap(),
+        "fn f() {\n    if a {\n        x\n    }\n    if b {\n        y\n    }\n}\n"
+    );
+}
+
+#[test]
+fn plain_additive_lines_are_kept_both_without_a_closer() {
+    let text = "a\n<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> o\nb\n";
+    assert_eq!(keep_both(text).unwrap(), "a\nx\ny\nb\n");
+}
+
+#[test]
+fn a_diff3_base_section_is_dropped() {
+    let text = "<<<<<<< HEAD\nx\n||||||| base\nold\n=======\ny\n>>>>>>> o\n";
+    assert_eq!(keep_both(text).unwrap(), "x\ny\n");
+}
+
+#[test]
+fn a_file_without_a_marker_is_not_a_conflict() {
+    assert_eq!(keep_both("plain\n"), None);
+}
