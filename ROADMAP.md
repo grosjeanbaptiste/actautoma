@@ -45,6 +45,43 @@ leaves the worktree behind (nothing says which file blocks it).
 
 `actautoma sync-all` settles the case of 3 pushes and 3 pulls pending without a human sequencing them. It calls `actrepo sync` (the per-branch verb: push ahead, fast-forward pull behind, report diverged and dirty), then `resolve-conflicts` for each diverged branch, then `ship` where merging is authorised (`openacte` repositories only). Every item is attempted, each outcome is read back, one report line per item, non-zero exit when any item failed. Own ADR before code; full design in `actrepo/ROADMAP.md` ("Bulk case"). It needs `actrepo pull`, `push --branch` and `branch remote` first.
 
+### Adaptive resolution (owner, 2026-11-25): a workflow reads the situation before it acts
+
+A workflow of `actautoma` is not a fixed sequence of commands. When something
+stands in its way, it diagnoses the situation, proposes a resolution plan, and
+executes only the steps that are safe. Case that triggered this directive: a
+`git push` waited eleven hours in the pre-push gate queue while the queue showed
+no slot held and seven gates waiting; two pushes of the same branch were running
+at once; a gate outlived its dead push; a gate that failed because the session
+killed it was reported with exit code 0. Nothing said any of this; the owner and
+the agent found it by hand, one `ps` at a time.
+
+Before it acts, and again when it waits longer than expected, a workflow:
+
+- **Reads the state.** Queue state (`actqueue state`: slots held, waiters, the
+  position of its own job), running `git push` and gate processes of the same
+  branch, the remote branch (`branch remote`), and the pull request if any.
+- **Names duplicates.** Two pushes or two gates for one branch: it keeps the
+  oldest one that is alive, names the other, and stops it only after saying so.
+- **Names orphans.** A gate whose parent push is dead, a gate of a temporary
+  directory, a waiter that makes no progress. It lists each with its pid, age
+  and job name, and asks before stopping it (confirm before deleting).
+- **Reads the result back.** A push is done when the branch is on the remote at
+  the expected sha, never because an exit code was 0; a gate stopped by a signal
+  is reported as stopped, not as failed or passed.
+- **Proposes a plan.** One line per step (for example: push with `-u origin
+  BRANCH`, open the pull request, do not merge), marks each step safe or needing
+  confirmation, runs the safe ones, and reports what remains.
+- **Never hides a stall.** Waiting beyond a threshold prints why (who is ahead,
+  who holds the slot) instead of staying silent.
+
+Scope: first `ship`, then `sync-all`, then every later workflow. It never
+bypasses a gate (`--no-verify`), never kills a process it did not start unless
+the owner confirms, and never merges where merging is not authorised. Own ADR
+before code: what it may do alone, what stops it, how the threshold is set.
+Tests first: a fixture with a duplicate push, an orphan gate and a stalled queue;
+the plan must name each, and nothing may be stopped without confirmation.
+
 ### Order
 
 1. Read-only verbs first (`pr view`, `pr list`, `branch remote`, `pr check`): additive, no risk.
