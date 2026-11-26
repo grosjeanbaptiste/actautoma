@@ -23,7 +23,7 @@ Today `actrepo pin <DEP> [REV]` rewrites every consumer found in the workspace f
 ## Slices (each its own PR, test first, `cargo mutants` with no survivor)
 
 1. Discovery and order: `plan(root, dep, rev)` returns the ordered consumers and their old revisions. Pure over the file system; no git.
-2. Move `pin_manifest` here; migrate `actrepo pin`.
+2. Move `pin_manifest` here; migrate `actrepo pin`. Done 2026-11-26 (actautoma #43, Actit #23, actrepo #90).
 3. Per-consumer execution through `Runner`, `--dry-run` first.
 4. `--merge`, then the walk across levels.
 5. `actrepo pin-propagate` as the thin verb, and the skill `openacte-orchestrate` updated.
