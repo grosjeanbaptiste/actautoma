@@ -52,11 +52,9 @@ pub fn clean(runner: &dyn Runner, dir: &Path, base: &str, apply: bool) -> Result
         if b.name.starts_with("origin/") {
             continue;
         }
-        // Superseded with the very tree of the base: the branch holds nothing the base lacks,
-        // even when its commits were never pushed or landed another way.
-        let identical = b.class == Class::Superseded
-            && git(runner, dir, &["rev-parse", &format!("{}^{{tree}}", b.name)])?
-                == git(runner, dir, &["rev-parse", &format!("{base}^{{tree}}")])?;
+        // Superseded: merging it would change nothing, so the branch holds nothing the base
+        // lacks, even when its commits were never pushed or landed another way.
+        let identical = b.class == Class::Superseded;
         if b.class != Class::Merged && !identical {
             continue;
         }
@@ -97,7 +95,7 @@ pub fn clean(runner: &dyn Runner, dir: &Path, base: &str, apply: bool) -> Result
             if let Some(p) = tree {
                 git(runner, dir, &["worktree", "remove", &p.to_string_lossy()])?;
             }
-            // `-d` refuses a branch git cannot see as merged; an identical tree is the proof here.
+            // `-d` refuses a branch git cannot see as merged; superseded is the proof here.
             git(
                 runner,
                 dir,
