@@ -13,55 +13,80 @@ fn line_of<'a>(toml: &'a str, dep: &str) -> Option<&'a str> {
     })
 }
 
-/// Byte range of the quoted value after `rev` on the line.
-fn rev_span(line: &str) -> Option<(usize, usize)> {
-    let at = line.find("rev")?;
-    let open = at + line[at..].find('"')? + 1;
-    Some((open, open + line[open..].find('"')?))
+/// How a git dependency is pinned.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Rev,
+    Tag,
 }
 
-/// The quoted value after `rev` on the line.
-fn rev_in(line: &str) -> Option<&str> {
-    rev_span(line).map(|(a, b)| &line[a..b])
+/// The key (`rev` or `tag`) of the line and the byte range of its quoted value.
+fn pin_span(line: &str) -> Option<(Kind, usize, usize)> {
+    [("rev", Kind::Rev), ("tag", Kind::Tag)]
+        .into_iter()
+        .find_map(|(key, kind)| {
+            let at = line.match_indices(key).map(|(i, _)| i).find(|&i| {
+                let before = line[..i].chars().next_back();
+                let after = line[i + key.len()..].trim_start();
+                before.is_some_and(|c| c.is_whitespace() || c == '{' || c == ',')
+                    && after.starts_with('=')
+            })?;
+            let open = at + line[at..].find('"')? + 1;
+            Some((kind, open, open + line[open..].find('"')?))
+        })
 }
 
-/// The text with `dep` pinned to `rev`, every other byte kept; `None` when `dep` is not a git
-/// dependency here.
+fn unpinned(dep: &str) -> Error {
+    Error::Run(format!(
+        "{dep} is a git dependency without a rev or a tag: nothing to pin"
+    ))
+}
+
+/// The text with `dep` pinned to `value`, every other byte kept; `None` when `dep` is not a git
+/// dependency here. A `rev` pin wants a full commit hash, a `tag` pin a tag name.
 ///
 /// # Errors
-/// When `rev` is not a full 40-character hash, or `dep` is a git dependency without a `rev`.
-pub fn with_rev(toml: &str, dep: &str, rev: &str) -> Result<Option<String>, Error> {
-    if !is_full_hash(rev) {
-        return Err(Error::Run(format!(
-            "{rev:?} is not a full 40-character commit hash"
-        )));
-    }
+/// When `value` does not suit the pin, or `dep` is a git dependency with neither `rev` nor `tag`.
+pub fn with_rev(toml: &str, dep: &str, value: &str) -> Result<Option<String>, Error> {
     let Some(line) = line_of(toml, dep) else {
         return Ok(None);
     };
-    let Some((a, b)) = rev_span(line) else {
-        return Err(Error::Run(format!(
-            "{dep} is a git dependency without a rev: nothing to pin"
-        )));
+    let Some((kind, a, b)) = pin_span(line) else {
+        return Err(unpinned(dep));
     };
-    let new = format!("{}{rev}{}", &line[..a], &line[b..]);
+    match kind {
+        Kind::Rev if !is_full_hash(value) => {
+            return Err(Error::Run(format!(
+                "{value:?} is not a full 40-character commit hash"
+            )))
+        }
+        Kind::Tag if !is_tag_name(value) => {
+            return Err(Error::Run(format!("{value:?} is not a tag name")))
+        }
+        _ => {}
+    }
+    let new = format!("{}{value}{}", &line[..a], &line[b..]);
     Ok(Some(toml.replacen(line, &new, 1)))
 }
 
-/// The pinned revision; `None` when `dep` is not a git dependency here.
+/// The pinned revision or tag; `None` when `dep` is not a git dependency here.
 ///
 /// # Errors
-/// When `dep` is a git dependency without a `rev`: there is nothing to pin.
+/// When `dep` is a git dependency with neither `rev` nor `tag`: there is nothing to pin.
 pub fn rev_of(toml: &str, dep: &str) -> Result<Option<String>, Error> {
     let Some(line) = line_of(toml, dep) else {
         return Ok(None);
     };
-    match rev_in(line) {
-        Some(rev) => Ok(Some(rev.to_string())),
-        None => Err(Error::Run(format!(
-            "{dep} is a git dependency without a rev: nothing to pin"
-        ))),
+    match pin_span(line) {
+        Some((_, a, b)) => Ok(Some(line[a..b].to_string())),
+        None => Err(unpinned(dep)),
     }
+}
+
+fn is_tag_name(value: &str) -> bool {
+    !value.is_empty()
+        && !is_full_hash(value)
+        && !value.chars().any(|c| c.is_whitespace() || c == '"')
 }
 
 /// Whether `rev` is a full 40-character commit hash.
