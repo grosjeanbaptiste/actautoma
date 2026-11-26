@@ -12,6 +12,10 @@ holds the workflows that chain several of them (ship, merge a stack, report a
 problem upstream). Both stay thin over `git` and `gh`, with the strictness of
 the rest of the doctrine (no silent failure, a refusal names what and why).
 
+### `pin-propagate` (ADR 0002, owner's directive 2026-11-25)
+
+Slice 1 done (`pin_plan::plan`: consumers and bump order). Next, each its own test-first PR: 2 move the manifest `rev` edit from `actrepo/src/pin/manifest.rs` and migrate `actrepo pin`; 3 per-consumer worktree, gate and PR with `--dry-run`; 4 `--merge`; 5 thin `actrepo pin-propagate`.
+
 ### Verbs missing today (found by shipping 30 PRs on 2026-11-22/23 with raw commands)
 
 `actrepo` has `pr create`, `pr merge`, `push` (a repository and its nested ones), `worktree list|prune`, `status`; it has no `commit` and no `pull`.
