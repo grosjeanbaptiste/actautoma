@@ -63,6 +63,9 @@ fn consumers(root: &Path, dep: &str, rev: &str) -> Result<Vec<Consumer>, Error> 
         let name = dir
             .file_name()
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        if dir.join(".git").is_file() {
+            continue; // a linked worktree of another repository: that repository is the consumer
+        }
         if name.to_lowercase().contains("emvi") {
             continue; // off limits: no edit, commit or pull request in an emvi repository
         }

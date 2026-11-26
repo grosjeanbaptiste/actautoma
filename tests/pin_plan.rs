@@ -204,3 +204,22 @@ fn a_repository_of_emvi_is_never_a_consumer() {
 
     assert_eq!(names(&found), ["actrepo"]);
 }
+
+#[test]
+fn a_linked_worktree_is_never_a_consumer() {
+    let r = root();
+    repo(&r, "actrepo", "actrepo", &[("actautoma", OLD)]);
+    repo(&r, "actrepo-wt-x", "actrepo", &[("actautoma", OLD)]);
+    // A linked worktree's `.git` is a file that points at the main repository.
+    fs::write(
+        r.join("actrepo-wt-x/.git"),
+        "gitdir: ../actrepo/.git/worktrees/x\n",
+    )
+    .unwrap();
+    // A real repository's `.git` is a folder.
+    fs::create_dir_all(r.join("actrepo/.git")).unwrap();
+
+    let found = plan(&r, "actautoma", NEW).unwrap();
+
+    assert_eq!(names(&found), ["actrepo"]);
+}
