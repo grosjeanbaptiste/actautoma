@@ -223,3 +223,36 @@ fn a_linked_worktree_is_never_a_consumer() {
 
     assert_eq!(names(&found), ["actrepo"]);
 }
+
+fn tagged(root: &Path, folder: &str, tag: &str) {
+    let dir = root.join(folder);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("Cargo.toml"),
+        format!("[package]\nname = \"{folder}\"\n\n[dependencies]\nactconf = {{ git = \"https://x/actconf\", tag = \"{tag}\" }}\n"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_consumer_pinned_by_tag_is_found_with_its_old_tag() {
+    let r = root();
+    tagged(&r, "actparc", "v0.4.0");
+    tagged(&r, "actinstall", "v0.5.0");
+
+    let found = plan(&r, "actconf", "v0.5.0").unwrap();
+
+    assert_eq!(names(&found), ["actinstall", "actparc"]);
+    assert_eq!(found[1].old_rev, "v0.4.0");
+    assert!(found[0].up_to_date && !found[1].up_to_date);
+}
+
+#[test]
+fn a_tag_given_to_a_consumer_pinned_by_hash_is_refused_naming_it() {
+    let r = root();
+    repo(&r, "actrepo", "actrepo", &[("actautoma", OLD)]);
+
+    let e = plan(&r, "actautoma", "v0.5.0").unwrap_err().to_string();
+
+    assert!(e.contains("actrepo") && e.contains("40"), "{e}");
+}

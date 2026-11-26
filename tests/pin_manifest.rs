@@ -48,3 +48,48 @@ fn a_dependency_already_on_the_rev_is_returned_unchanged() {
         Some(toml())
     );
 }
+
+const TAGGED: &str = "[dependencies]\nactconf = { git = \"https://x/actconf\", tag = \"v0.4.0\", default-features = false }\nactit = { git = \"ssh://x/Actit.git\", rev = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" }\n";
+
+#[test]
+fn a_tag_pin_is_rewritten_to_the_new_tag_and_nothing_else() {
+    let out = with_rev(TAGGED, "actconf", "v0.5.0").unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(out, Some(TAGGED.replacen("v0.4.0", "v0.5.0", 1)));
+}
+
+#[test]
+fn the_pin_of_a_tag_dependency_is_its_tag() {
+    use actautoma::pin_manifest::rev_of;
+    assert_eq!(rev_of(TAGGED, "actconf").unwrap(), Some("v0.4.0".into()));
+}
+
+#[test]
+fn a_tag_is_a_name_without_quote_or_space() {
+    for bad in ["", "v0 .5", "v0\"5"] {
+        assert!(with_rev(TAGGED, "actconf", bad).is_err(), "{bad:?}");
+    }
+}
+
+#[test]
+fn a_rev_pin_still_wants_a_full_hash_even_next_to_a_tag_pin() {
+    assert!(with_rev(TAGGED, "actit", "v0.5.0").is_err());
+}
+
+#[test]
+fn a_commit_hash_is_never_written_as_a_tag() {
+    assert!(with_rev(TAGGED, "actconf", B).is_err());
+}
+
+#[test]
+fn the_pin_key_is_found_by_its_whole_name_wherever_it_stands_on_the_line() {
+    use actautoma::pin_manifest::rev_of;
+    for line in [
+        format!("actit = {{git=\"u\",rev=\"{A}\"}}"),
+        format!("actit = {{rev=\"{A}\", git=\"u\"}}"),
+        format!("actit = {{ git = \"u\", xrev = \"zz\", rev = \"{A}\" }}"),
+        format!("actit = {{ git = \"u\", rev_note = \"zz\", rev = \"{A}\" }}"),
+        format!("actit = {{ git = \"u\", rev\t= \"{A}\" }}"),
+    ] {
+        assert_eq!(rev_of(&line, "actit").unwrap(), Some(A.into()), "{line}");
+    }
+}

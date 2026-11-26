@@ -6,7 +6,7 @@
 
 use crate::binary::package_name;
 use crate::forge::Error;
-use crate::pin_manifest::{is_full_hash, rev_of};
+use crate::pin_manifest::{rev_of, with_rev};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -72,6 +72,8 @@ fn consumers(root: &Path, dep: &str, rev: &str) -> Result<Vec<Consumer>, Error> 
         let manifest = fs::read_to_string(&file).map_err(|e| io(&file, "read", &e))?;
         let old = rev_of(&manifest, dep).map_err(|e| Error::Run(format!("{name}: {e}")))?;
         if let Some(old_rev) = old {
+            // A pin by hash wants a hash, a pin by tag a tag: `with_rev` says which.
+            with_rev(&manifest, dep, rev).map_err(|e| Error::Run(format!("{name}: {e}")))?;
             found.push(Consumer {
                 up_to_date: old_rev == rev,
                 package: package_name(&manifest).unwrap_or_else(|| name.clone()),
@@ -99,11 +101,6 @@ fn pins(c: &Consumer, other: &Consumer) -> Result<bool, Error> {
 /// When `rev` is not a full hash, `root` or a manifest cannot be read, a git dependency has no
 /// `rev`, or the consumers pin each other in a cycle.
 pub fn plan(root: &Path, dep: &str, rev: &str) -> Result<Vec<Consumer>, Error> {
-    if !is_full_hash(rev) {
-        return Err(Error::Run(format!(
-            "{rev:?} is not a full 40-character commit hash"
-        )));
-    }
     let mut left = consumers(root, dep, rev)?;
     let mut ordered = Vec::with_capacity(left.len());
     while !left.is_empty() {
