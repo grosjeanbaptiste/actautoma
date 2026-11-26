@@ -13,6 +13,8 @@ pub mod glab;
 mod glab_backup;
 pub mod install_records;
 pub mod move_dir;
+pub mod pin_manifest;
+pub mod pin_plan;
 pub mod process;
 pub mod pulls;
 pub mod realign_fs;
