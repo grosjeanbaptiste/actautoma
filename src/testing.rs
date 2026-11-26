@@ -27,7 +27,7 @@ impl Fake {
     }
 }
 
-impl Runner for &Fake {
+impl Runner for Fake {
     fn run(&self, program: &str, args: &[&str], dir: Option<&Path>) -> Result<String, Error> {
         self.calls.borrow_mut().push((
             program.to_string(),
