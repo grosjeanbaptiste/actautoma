@@ -1,16 +1,18 @@
-//! Bump one consumer: cut a worktree from `origin/main`, rewrite the pin, refresh the lock,
-//! commit, and ship the branch without merging (ADR 0002, slice 3).
+//! Bump one consumer: cut a worktree from `origin/main`, rewrite its pins, refresh the lock,
+//! commit, and ship the branch, merging when asked and safe (ADR 0002, slices 3-4).
 
 use crate::forge::{Error, Forge, Runner};
 use crate::pin_manifest::with_rev;
 use crate::pin_plan::Consumer;
 use crate::pin_propagate::{Options, Outcome};
-use crate::ship::{ship, Options as ShipOptions};
+use crate::ship::{ship, Options as ShipOptions, Outcome as Shipped};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 /// A failed step and the error text.
 type Failure = (&'static str, String);
+
+type Pins = [(String, String)];
 
 fn at<T>(step: &'static str, result: Result<T, Error>) -> Result<T, Failure> {
     result.map_err(|e| (step, e.to_string()))
@@ -28,19 +30,23 @@ fn worktree_of(consumer: &Consumer, branch: &str) -> PathBuf {
         .join(branch.replace('/', "-"))
 }
 
-/// Rewrites the pin in the worktree's manifest; `false` when `origin/main` already holds `rev`.
-fn rewrite(wt: &Path, dep: &str, rev: &str) -> Result<bool, Failure> {
+/// Rewrites every pin in the worktree's manifest; `false` when `origin/main` already holds them.
+fn rewrite(wt: &Path, pins: &Pins) -> Result<bool, Failure> {
     let file = wt.join("Cargo.toml");
     let text = at(
         "rewrite",
         fs::read_to_string(&file).map_err(|e| Error::Run(format!("read {}: {e}", file.display()))),
     )?;
-    let Some(new) = at("rewrite", with_rev(&text, dep, rev))? else {
-        return Err((
-            "rewrite",
-            format!("{dep} is not a git dependency on origin/main"),
-        ));
-    };
+    let mut new = text.clone();
+    for (dep, rev) in pins {
+        let Some(next) = at("rewrite", with_rev(&new, dep, rev))? else {
+            return Err((
+                "rewrite",
+                format!("{dep} is not a git dependency on origin/main"),
+            ));
+        };
+        new = next;
+    }
     if new == text {
         return Ok(false);
     }
@@ -64,65 +70,78 @@ fn discard(
     Ok(())
 }
 
+/// `cargo update -p A -p B`, then commit `Cargo.toml` and `Cargo.lock`.
+fn commit(runner: &impl Runner, wt: &Path, pins: &Pins) -> Result<(), Failure> {
+    let mut update = vec!["update"];
+    for (dep, _) in pins {
+        update.extend(["-p", dep]);
+    }
+    at("cargo update", runner.run("cargo", &update, Some(wt)))?;
+    let git = |args: &[&str]| runner.run("git", args, Some(wt));
+    at("commit", git(&["add", "Cargo.toml", "Cargo.lock"]))?;
+    let list: Vec<String> = pins
+        .iter()
+        .map(|(dep, rev)| format!("{dep} at {}", short(rev)))
+        .collect();
+    at(
+        "commit",
+        git(&["commit", "-m", &format!("chore: pin {}", list.join(", "))]),
+    )?;
+    Ok(())
+}
+
 fn try_bump<F: Forge>(
     runner: &impl Runner,
     forge_for: &dyn Fn(&Path) -> F,
     consumer: &Consumer,
-    (dep, rev): (&str, &str),
+    pins: &Pins,
     options: &Options,
 ) -> Result<Outcome, Failure> {
-    let branch = format!("chore/bump-{dep}-{}", short(rev));
+    let branch = format!("chore/bump-{}-{}", pins[0].0, short(&pins[0].1));
     let wt = worktree_of(consumer, &branch);
-    let git = |dir: &Path, args: &[&str]| runner.run("git", args, Some(dir));
-    at("fetch", git(&consumer.dir, &["fetch", "origin"]))?;
     let path = wt.to_string_lossy();
+    let git = |args: &[&str]| runner.run("git", args, Some(&consumer.dir));
+    at("fetch", git(&["fetch", "origin"]))?;
     at(
         "worktree",
-        git(
-            &consumer.dir,
-            &["worktree", "add", "-b", &branch, &path, "origin/main"],
-        ),
+        git(&["worktree", "add", "-b", &branch, &path, "origin/main"]),
     )?;
-    if !rewrite(&wt, dep, rev)? {
+    if !rewrite(&wt, pins)? {
         discard(runner, consumer, &wt, &branch)?;
         return Ok(Outcome::UpToDate);
     }
-    at(
-        "cargo update",
-        runner.run("cargo", &["update", "-p", dep], Some(&wt)),
-    )?;
-    at("commit", git(&wt, &["add", "Cargo.toml", "Cargo.lock"]))?;
-    let message = format!("chore: pin {dep} at {}", short(rev));
-    at("commit", git(&wt, &["commit", "-m", &message]))?;
-    let body = format!(
-        "Bump `{dep}` from {} to {}. Opened by `actautoma pin-propagate`.",
-        short(&consumer.old_rev),
-        short(rev)
-    );
+    commit(runner, &wt, pins)?;
+    let list: Vec<String> = pins
+        .iter()
+        .map(|(dep, rev)| format!("`{dep}` to {}", short(rev)))
+        .collect();
     let ship_options = ShipOptions {
         gate: options.gate.clone(),
-        merge: false,
-        body: Some(body),
+        merge: options.merge,
+        body: Some(format!(
+            "Bump {}. Opened by `actautoma pin-propagate`.",
+            list.join(", ")
+        )),
         settle: options.settle,
     };
-    let shipped = ship(&forge_for(&wt), runner, &wt, &ship_options);
-    match at("ship", shipped)? {
-        crate::ship::Outcome::Merged { url, .. } | crate::ship::Outcome::Held { url, .. } => {
-            Ok(Outcome::Opened { url })
-        }
-    }
+    let shipped = at("ship", ship(&forge_for(&wt), runner, &wt, &ship_options))?;
+    Ok(match shipped {
+        Shipped::Merged { url, .. } => Outcome::Merged { url },
+        Shipped::Held { url, .. } if !options.merge => Outcome::Opened { url },
+        Shipped::Held { url, reason, .. } => Outcome::Held { url, reason },
+    })
 }
 
-/// Bumps `dep` to `rev` in `consumer`; a failed step is an [`Outcome::Failed`], never a panic.
+/// Bumps `pins` (package, rev) in `consumer`, the first one naming the branch; a failed step is
+/// an [`Outcome::Failed`], never a panic.
 pub(crate) fn bump<F: Forge>(
     runner: &impl Runner,
     forge_for: &dyn Fn(&Path) -> F,
     consumer: &Consumer,
-    dep: &str,
-    rev: &str,
+    pins: &Pins,
     options: &Options,
 ) -> Outcome {
-    try_bump(runner, forge_for, consumer, (dep, rev), options).unwrap_or_else(|(step, output)| {
+    try_bump(runner, forge_for, consumer, pins, options).unwrap_or_else(|(step, output)| {
         Outcome::Failed {
             step: step.to_string(),
             output,

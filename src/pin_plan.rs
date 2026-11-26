@@ -24,6 +24,22 @@ pub struct Consumer {
     manifest: String,
 }
 
+impl Consumer {
+    /// The Cargo package this repository builds.
+    #[must_use]
+    pub fn package(&self) -> &str {
+        &self.package
+    }
+
+    /// The revision this repository pins of `dep`; `None` when it does not pin it.
+    ///
+    /// # Errors
+    /// When `dep` is a git dependency here without a `rev`.
+    pub fn pinned_rev(&self, dep: &str) -> Result<Option<String>, Error> {
+        rev_of(&self.manifest, dep).map_err(|e| Error::Run(format!("{}: {e}", self.name)))
+    }
+}
+
 fn io(path: &Path, what: &str, e: &std::io::Error) -> Error {
     Error::Run(format!("{what} {}: {e}", path.display()))
 }
@@ -47,6 +63,9 @@ fn consumers(root: &Path, dep: &str, rev: &str) -> Result<Vec<Consumer>, Error> 
         let name = dir
             .file_name()
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        if name.to_lowercase().contains("emvi") {
+            continue; // off limits: no edit, commit or pull request in an emvi repository
+        }
         let manifest = fs::read_to_string(&file).map_err(|e| io(&file, "read", &e))?;
         let old = rev_of(&manifest, dep).map_err(|e| Error::Run(format!("{name}: {e}")))?;
         if let Some(old_rev) = old {

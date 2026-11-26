@@ -172,3 +172,35 @@ fn a_dependency_whose_name_only_starts_like_the_wanted_one_is_not_a_pin() {
 
     assert!(plan(&r, "actautoma", NEW).unwrap().is_empty());
 }
+
+#[test]
+fn a_consumer_names_its_package_and_the_revision_it_pins_of_any_dependency() {
+    let r = root();
+    repo(
+        &r,
+        "actrepo-folder",
+        "actrepo",
+        &[("actautoma", OLD), ("actit", NEW)],
+    );
+
+    let found = plan(&r, "actautoma", NEW).unwrap();
+
+    assert_eq!(found[0].package(), "actrepo");
+    assert_eq!(found[0].pinned_rev("actit").unwrap().as_deref(), Some(NEW));
+    assert_eq!(
+        found[0].pinned_rev("actautoma").unwrap().as_deref(),
+        Some(OLD)
+    );
+    assert_eq!(found[0].pinned_rev("serde").unwrap(), None);
+}
+
+#[test]
+fn a_repository_of_emvi_is_never_a_consumer() {
+    let r = root();
+    repo(&r, "emvi-app", "emvi-app", &[("actautoma", OLD)]);
+    repo(&r, "actrepo", "actrepo", &[("actautoma", OLD)]);
+
+    let found = plan(&r, "actautoma", NEW).unwrap();
+
+    assert_eq!(names(&found), ["actrepo"]);
+}
