@@ -224,3 +224,34 @@ fn a_branch_never_pushed_with_work_the_base_lacks_is_kept() {
 
     assert!(has_local(&dir, "feat/lonely"));
 }
+
+#[test]
+fn a_branch_behind_the_base_that_adds_nothing_to_it_is_removed_with_its_worktree() {
+    let dir = repo();
+    let wt = dir.join(".worktrees/feat/behind");
+    git(
+        &dir,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feat/behind",
+            wt.to_str().unwrap(),
+            "main",
+        ],
+    );
+    // net-empty branch: an own commit that changes nothing against the base
+    git(&wt, &["commit", "-q", "--allow-empty", "-m", "nothing"]);
+    // the base moves on, so the branch tree differs from the base tree
+    commit(&dir, "later.txt", "later\n", "base moves on");
+    git(&dir, &["push", "-q", "origin", "main"]);
+
+    let steps = clean(&ProcessRunner, &dir, "main", true).unwrap();
+
+    assert!(!wt.exists(), "worktree still there");
+    assert!(!has_local(&dir, "feat/behind"));
+    assert!(steps.contains(&Step::Removed {
+        branch: "feat/behind".into()
+    }));
+}
