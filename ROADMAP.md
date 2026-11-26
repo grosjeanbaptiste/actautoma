@@ -45,6 +45,10 @@ switched peers' checkouts to `main`; it reports "PR merged, but the local
 update is incomplete" when the worktree holds untracked generated files and
 leaves the worktree behind (nothing says which file blocks it).
 
+### Bug found 2026-11-26: `rename-repo` refuses a case-only rename on macOS
+
+`actautoma rename-repo OWNER/Actit actit` stops with "`~/.cargo/bin/actit` already exists": `binary::check` sees `Actit` and `actit` as one file on a case-insensitive volume. It was worked around with `--bin-dir` on an empty folder. Wanted: a test first (old and new differ only by case, same inode), then the check treats that as the same binary and renames the folder in two steps. After the rename, `git worktree repair` leaves the nested worktrees registered under the old-case path; `rename-repo` should rewrite them.
+
 ### Bulk case (owner, 2026-11-23): several pushes and several pulls at once
 
 `actautoma sync-all` settles the case of 3 pushes and 3 pulls pending without a human sequencing them. It calls `actrepo sync` (the per-branch verb: push ahead, fast-forward pull behind, report diverged and dirty), then `resolve-conflicts` for each diverged branch, then `ship` where merging is authorised (`openacte` repositories only). Every item is attempted, each outcome is read back, one report line per item, non-zero exit when any item failed. Own ADR before code; full design in `actrepo/ROADMAP.md` ("Bulk case"). It needs `actrepo pull`, `push --branch` and `branch remote` first.
