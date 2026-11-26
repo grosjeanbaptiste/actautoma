@@ -14,7 +14,7 @@ the rest of the doctrine (no silent failure, a refusal names what and why).
 
 ### `pin-propagate` (ADR 0002, owner's directive 2026-11-25)
 
-Slice 1 done (`pin_plan::plan`: consumers and bump order). Slice 2 done (`pin_manifest::with_rev` in actautoma #43; `actrepo pin` uses it, local copy removed, actrepo #90). Slice 3 done (`pin_propagate::propagate`, library). Slice 4 done (verb `actautoma pin-propagate DEP [--rev REV] [--root DIR] [--dry-run] [--merge] [--gate "CMD"]` in #46; `--merge` and the multi-level walk in #47). Next, each its own test-first PR: 5 thin `actrepo pin-propagate` and the skill `openacte-orchestrate`. Open: pins by `tag` (such as `biorcrux` in `acteble_platform`) are not read; `src/pin_propagate.rs` holds library and CLI and should be split in its own PR.
+Slice 1 done (`pin_plan::plan`: consumers and bump order). Slice 2 done (`pin_manifest::with_rev` in actautoma #43; `actrepo pin` uses it, local copy removed, actrepo #90). Slice 3 done (`pin_propagate::propagate`, library). Slice 4 done (verb `actautoma pin-propagate DEP [--rev REV] [--root DIR] [--dry-run] [--merge] [--gate "CMD"]` in #46; `--merge` and the multi-level walk in #47). Slice 5 done (`actrepo pin-propagate` in actrepo #92, skill `openacte-orchestrate` in dotfiles #75). Tag pins are read since `feat/pin-tag`. Open, each its own test-first PR: `src/pin_propagate.rs` holds library and CLI and should be split; no wait for CI checks before `--merge`; the owner's local checkouts are not fast-forwarded after a merge.
 
 ### Verbs missing today (found by shipping 30 PRs on 2026-11-22/23 with raw commands)
 
