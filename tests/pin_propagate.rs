@@ -584,3 +584,60 @@ fn the_head_of_a_merged_consumer_is_read_only_when_a_dependant_pins_it() {
         .ran()
         .contains(&"git rev-parse origin/main".to_string()));
 }
+
+#[test]
+fn a_merged_bump_removes_its_worktree_and_its_local_branch() {
+    let r = root();
+    repo(&r, "alpha", OLD);
+    let (tools, hub) = (Tools::new(), Hub::default());
+
+    let out = go(&tools, &hub, &r, &merging()).unwrap();
+
+    assert!(matches!(&out[0].1, Outcome::Merged { .. }));
+    let ran = tools.ran();
+    let wt = worktree(&r, "alpha");
+    assert!(
+        ran.contains(&format!("git worktree remove {}", wt.display())),
+        "{ran:?}"
+    );
+    assert!(ran.contains(&format!("git branch -D {BRANCH}")));
+}
+
+#[test]
+fn an_open_bump_keeps_its_worktree_for_the_pull_request() {
+    let r = root();
+    repo(&r, "alpha", OLD);
+    let (tools, hub) = (Tools::new(), Hub::default());
+
+    go(&tools, &hub, &r, &options()).unwrap();
+
+    assert!(!tools
+        .ran()
+        .iter()
+        .any(|l| l.starts_with("git worktree remove")));
+}
+
+#[test]
+fn a_failed_cleanup_after_a_merge_is_reported_with_the_merged_pull_request() {
+    let r = root();
+    repo(&r, "alpha", OLD);
+    let tools = Tools {
+        fail_on: Some("git worktree remove"),
+        ..Tools::new()
+    };
+    let hub = Hub::default();
+
+    let out = go(&tools, &hub, &r, &merging()).unwrap();
+
+    match &out[0].1 {
+        Outcome::Failed { step, output } => {
+            assert_eq!(step, "cleanup");
+            assert!(
+                output.contains("https://example.test/o/r/pull/7"),
+                "{output}"
+            );
+            assert!(output.contains("RED"), "{output}");
+        }
+        other => panic!("{other:?}"),
+    }
+}

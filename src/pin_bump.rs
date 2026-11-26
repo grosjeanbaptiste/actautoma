@@ -126,7 +126,12 @@ fn try_bump<F: Forge>(
     };
     let shipped = at("ship", ship(&forge_for(&wt), runner, &wt, &ship_options))?;
     Ok(match shipped {
-        Shipped::Merged { url, .. } => Outcome::Merged { url },
+        Shipped::Merged { url, .. } => {
+            // The pull request is merged: its worktree and local branch have done their job.
+            discard(runner, consumer, &wt, &branch)
+                .map_err(|(step, output)| (step, format!("merged {url}, then: {output}")))?;
+            Outcome::Merged { url }
+        }
         Shipped::Held { url, .. } if !options.merge => Outcome::Opened { url },
         Shipped::Held { url, reason, .. } => Outcome::Held { url, reason },
     })
