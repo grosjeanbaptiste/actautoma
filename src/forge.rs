@@ -31,6 +31,13 @@ pub trait Runner {
     fn run(&self, program: &str, args: &[&str], dir: Option<&Path>) -> Result<String, Error>;
 }
 
+/// A shared runner runs like the runner itself, so a forge can borrow the verb's runner.
+impl<R: Runner + ?Sized> Runner for &R {
+    fn run(&self, program: &str, args: &[&str], dir: Option<&Path>) -> Result<String, Error> {
+        (**self).run(program, args, dir)
+    }
+}
+
 /// Whether the platform can merge a pull request now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mergeable {
