@@ -1,6 +1,6 @@
 # ADR 0002 — `pin_propagate`: carry a new revision of a shared dependency to every consumer
 
-- Status: proposed (owner's directive 2026-11-25: pins are updated automatically; first seen with the `actautoma` pin of `Actit` and `actrepo`, which blocked `actrepo clean` until three hand-made steps were done).
+- Status: accepted, all five slices done 2026-11-26 (owner's directive 2026-11-25: pins are updated automatically; first seen with the `actautoma` pin of `Actit` and `actrepo`, which blocked `actrepo clean` until three hand-made steps were done).
 - Date: 2026-11-26
 
 ## Context
@@ -26,7 +26,7 @@ Today `actrepo pin <DEP> [REV]` rewrites every consumer found in the workspace f
 2. Move `pin_manifest` here; migrate `actrepo pin`. Done 2026-11-26 (actautoma #43, Actit #23, actrepo #90).
 3. Per-consumer execution through `Runner`, `--dry-run` first. Done 2026-11-26 as a library (`pin_propagate`, `pin_bump`); the `actautoma pin-propagate` CLI verb comes with slice 4, so its options appear once.
 4. `--merge`, then the walk across levels. Done 2026-11-26 (verb in #46, merge and levels in #47): a dependant that pins an earlier consumer is bumped to both `DEP` and that consumer's `origin/main` head in one PR, after the earlier one is merged (`Blocked` until then); emvi folders are never consumers.
-5. `actrepo pin-propagate` as the thin verb, and the skill `openacte-orchestrate` updated.
+5. `actrepo pin-propagate` as the thin verb, and the skill `openacte-orchestrate` updated. Done 2026-11-26 (actrepo #92, dotfiles #75).
 
 ## Consequences
 
