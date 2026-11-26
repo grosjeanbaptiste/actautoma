@@ -1,6 +1,6 @@
-//! Read the `rev` of one git dependency in a `Cargo.toml`.
+//! Read and rewrite the `rev` of one git dependency in a `Cargo.toml`.
 //!
-//! Moved here from `actrepo/src/pin/manifest.rs` (ADR 0002, slice 2 removes that copy).
+//! Moved here from `actrepo/src/pin/manifest.rs` (ADR 0002, slice 2; `actrepo` drops its copy).
 
 use crate::forge::Error;
 
@@ -13,11 +13,39 @@ fn line_of<'a>(toml: &'a str, dep: &str) -> Option<&'a str> {
     })
 }
 
-/// The quoted value after `rev` on the line.
-fn rev_in(line: &str) -> Option<&str> {
+/// Byte range of the quoted value after `rev` on the line.
+fn rev_span(line: &str) -> Option<(usize, usize)> {
     let at = line.find("rev")?;
     let open = at + line[at..].find('"')? + 1;
-    Some(&line[open..open + line[open..].find('"')?])
+    Some((open, open + line[open..].find('"')?))
+}
+
+/// The quoted value after `rev` on the line.
+fn rev_in(line: &str) -> Option<&str> {
+    rev_span(line).map(|(a, b)| &line[a..b])
+}
+
+/// The text with `dep` pinned to `rev`, every other byte kept; `None` when `dep` is not a git
+/// dependency here.
+///
+/// # Errors
+/// When `rev` is not a full 40-character hash, or `dep` is a git dependency without a `rev`.
+pub fn with_rev(toml: &str, dep: &str, rev: &str) -> Result<Option<String>, Error> {
+    if !is_full_hash(rev) {
+        return Err(Error::Run(format!(
+            "{rev:?} is not a full 40-character commit hash"
+        )));
+    }
+    let Some(line) = line_of(toml, dep) else {
+        return Ok(None);
+    };
+    let Some((a, b)) = rev_span(line) else {
+        return Err(Error::Run(format!(
+            "{dep} is a git dependency without a rev: nothing to pin"
+        )));
+    };
+    let new = format!("{}{rev}{}", &line[..a], &line[b..]);
+    Ok(Some(toml.replacen(line, &new, 1)))
 }
 
 /// The pinned revision; `None` when `dep` is not a git dependency here.
