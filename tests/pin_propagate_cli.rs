@@ -190,3 +190,68 @@ fn a_borrowed_runner_runs_the_commands_of_the_runner_it_borrows() {
     assert_eq!(got, "out");
     assert_eq!(t.ran.borrow()[0].0, "git status");
 }
+
+#[test]
+fn a_merge_request_is_accepted_and_a_dry_run_still_touches_nothing() {
+    let root = root();
+    repo(&root, "actrepo", OLD);
+    let t = tools(vec![]);
+    let (result, out) = run(
+        &root,
+        &[
+            "pin-propagate",
+            "actit",
+            "--rev",
+            NEW,
+            "--root",
+            root.to_str().unwrap(),
+            "--dry-run",
+            "--merge",
+        ],
+        &t,
+    );
+    result.unwrap();
+    assert!(out.contains("actrepo: planned"), "{out}");
+    assert!(t.ran.borrow().is_empty());
+}
+
+#[test]
+fn the_usage_names_the_merge_option() {
+    assert!(actautoma::pin_propagate::USAGE.contains("[--merge]"));
+}
+
+#[test]
+fn each_outcome_has_its_own_report_line() {
+    use actautoma::pin_propagate::{line, Outcome};
+    let url = || "https://example.test/pull/7".to_string();
+    let cases = [
+        (Outcome::UpToDate, "x: up to date"),
+        (Outcome::Planned, "x: planned"),
+        (
+            Outcome::Opened { url: url() },
+            "x: opened https://example.test/pull/7",
+        ),
+        (
+            Outcome::Merged { url: url() },
+            "x: merged https://example.test/pull/7",
+        ),
+        (
+            Outcome::Held {
+                url: url(),
+                reason: "no gate".into(),
+            },
+            "x: held https://example.test/pull/7: no gate",
+        ),
+        (Outcome::Blocked { on: "mid".into() }, "x: blocked on mid"),
+        (
+            Outcome::Failed {
+                step: "fetch".into(),
+                output: "boom".into(),
+            },
+            "x: failed at fetch: boom",
+        ),
+    ];
+    for (outcome, expected) in cases {
+        assert_eq!(line(&("x".to_string(), outcome)), expected);
+    }
+}

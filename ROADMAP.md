@@ -14,7 +14,7 @@ the rest of the doctrine (no silent failure, a refusal names what and why).
 
 ### `pin-propagate` (ADR 0002, owner's directive 2026-11-25)
 
-Slice 1 done (`pin_plan::plan`: consumers and bump order). Slice 2 done (`pin_manifest::with_rev` in actautoma #43; `actrepo pin` uses it, local copy removed, actrepo #90). Slice 3 done (`pin_propagate::propagate`, library only, no merge, no CLI verb). Next, each its own test-first PR: 3 per-consumer worktree, gate and PR with `--dry-run`; 4 `--merge`; 5 thin `actrepo pin-propagate`.
+Slice 1 done (`pin_plan::plan`: consumers and bump order). Slice 2 done (`pin_manifest::with_rev` in actautoma #43; `actrepo pin` uses it, local copy removed, actrepo #90). Slice 3 done (`pin_propagate::propagate`, library). Slice 4a done (`--merge` option and the multi-level walk, library; no CLI verb yet). Next, each its own test-first PR: 4b the verb `actautoma pin-propagate DEP [--rev REV] [--root DIR] [--dry-run] [--merge] [--gate "CMD"]`; 3 per-consumer worktree, gate and PR with `--dry-run`; 4 `--merge`; 5 thin `actrepo pin-propagate`.
 
 ### Verbs missing today (found by shipping 30 PRs on 2026-11-22/23 with raw commands)
 

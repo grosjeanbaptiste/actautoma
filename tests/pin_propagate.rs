@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static N: AtomicUsize = AtomicUsize::new(0);
 const OLD: &str = "1111111111111111111111111111111111111111";
 const NEW: &str = "2222222222222222222222222222222222222222";
+const HEAD: &str = "3333333333333333333333333333333333333333";
 const BRANCH: &str = "chore/bump-actit-2222222";
 
 fn root() -> PathBuf {
@@ -33,6 +34,20 @@ fn repo(root: &Path, folder: &str, rev: &str) {
     let dir = root.join(folder);
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("Cargo.toml"), manifest(rev)).unwrap();
+}
+
+/// A repository whose package is `package` and that pins each of `deps` (name, rev).
+fn repo_of(root: &Path, folder: &str, package: &str, deps: &[(&str, &str)]) {
+    let dir = root.join(folder);
+    fs::create_dir_all(&dir).unwrap();
+    let mut text =
+        format!("[package]\nname = \"{package}\"\nversion = \"0.1.0\"\n\n[dependencies]\n");
+    for (name, rev) in deps {
+        text.push_str(&format!(
+            "{name} = {{ git = \"https://github.com/o/{name}\", rev = \"{rev}\" }}\n"
+        ));
+    }
+    fs::write(dir.join("Cargo.toml"), text).unwrap();
 }
 
 fn worktree(root: &Path, folder: &str) -> PathBuf {
@@ -80,6 +95,7 @@ impl Runner for Tools {
                 fs::write(Path::new(path).join("Cargo.toml"), text).unwrap();
                 Ok(String::new())
             }
+            ["rev-parse", "origin/main"] => Ok(format!("{HEAD}\n")),
             ["rev-parse", "--abbrev-ref", "HEAD"] => Ok(format!("{BRANCH}\n")),
             ["log", "-1", "--format=%s"] => Ok("chore: pin actit\n".into()),
             ["log", "-1", "--format=%b"] => Ok("Body.\n".into()),
@@ -90,7 +106,23 @@ impl Runner for Tools {
 
 #[derive(Clone, Default)]
 struct Hub {
+    slug: String,
     created: Rc<RefCell<Vec<NewPullRequest>>>,
+    merged: Rc<RefCell<Vec<u64>>>,
+}
+
+impl Hub {
+    /// The forge of the worktree `.../<folder>/.worktrees/<branch>`: its slug names the folder.
+    fn at(&self, wt: &Path) -> Hub {
+        let folder = wt.parent().and_then(Path::parent).and_then(Path::file_name);
+        Hub {
+            slug: format!(
+                "me/{}",
+                folder.map_or(String::new(), |f| f.to_string_lossy().into_owned())
+            ),
+            ..self.clone()
+        }
+    }
 }
 
 impl Forge for Hub {
@@ -110,12 +142,13 @@ impl Forge for Hub {
         self.created.borrow_mut().push(pr.clone());
         Ok("https://example.test/o/r/pull/7".into())
     }
-    fn merge_pr(&self, _: u64) -> Result<(), Error> {
-        Err(Error::Unsupported("merge".into()))
+    fn merge_pr(&self, number: u64) -> Result<(), Error> {
+        self.merged.borrow_mut().push(number);
+        Ok(())
     }
     fn view_repo(&self) -> Result<Repo, Error> {
         Ok(Repo {
-            slug: "me/x".into(),
+            slug: self.slug.clone(),
             default_branch: "main".into(),
         })
     }
@@ -134,6 +167,7 @@ fn options() -> Options {
     Options {
         gate: None,
         dry_run: false,
+        merge: false,
         settle: std::time::Duration::ZERO,
     }
 }
@@ -144,7 +178,7 @@ fn go(
     root: &Path,
     opts: &Options,
 ) -> Result<Vec<(String, Outcome)>, Error> {
-    propagate(tools, &|_: &Path| hub.clone(), root, "actit", NEW, opts)
+    propagate(tools, &|wt: &Path| hub.at(wt), root, "actit", NEW, opts)
 }
 
 fn outcomes(r: &[(String, Outcome)]) -> Vec<(&str, &Outcome)> {
@@ -352,4 +386,201 @@ fn a_plan_error_is_an_error_and_runs_nothing() {
 
     assert!(e.is_err());
     assert!(tools.ran().is_empty());
+}
+
+fn merging() -> Options {
+    Options {
+        gate: Some(vec!["gate".into()]),
+        merge: true,
+        ..options()
+    }
+}
+
+fn two_levels(r: &Path, mid_actit: &str) {
+    repo_of(r, "mid", "mid", &[("actit", mid_actit)]);
+    repo_of(r, "top", "top", &[("actit", OLD), ("mid", OLD)]);
+}
+
+fn wt_manifest(r: &Path, folder: &str, branch: &str) -> String {
+    let p = r
+        .join(folder)
+        .join(".worktrees")
+        .join(branch.replace('/', "-"));
+    fs::read_to_string(p.join("Cargo.toml")).unwrap()
+}
+
+#[test]
+fn a_green_gate_and_a_clean_pull_request_are_merged() {
+    let r = root();
+    repo(&r, "alpha", OLD);
+    let (tools, hub) = (Tools::new(), Hub::default());
+
+    let out = go(&tools, &hub, &r, &merging()).unwrap();
+
+    assert_eq!(
+        out,
+        vec![(
+            "alpha".to_string(),
+            Outcome::Merged {
+                url: "https://example.test/o/r/pull/7".into()
+            }
+        )]
+    );
+    assert_eq!(*hub.merged.borrow(), [7]);
+}
+
+#[test]
+fn without_a_gate_the_pull_request_is_held_not_merged() {
+    let r = root();
+    repo(&r, "alpha", OLD);
+    let (tools, hub) = (Tools::new(), Hub::default());
+    let opts = Options {
+        gate: None,
+        ..merging()
+    };
+
+    let out = go(&tools, &hub, &r, &opts).unwrap();
+
+    assert!(matches!(&out[0].1, Outcome::Held { reason, .. } if reason.contains("no gate")));
+    assert!(hub.merged.borrow().is_empty());
+}
+
+#[test]
+fn a_repository_never_merged_automatically_is_held() {
+    let r = root();
+    repo(&r, "acteble_api", OLD);
+    let (tools, hub) = (Tools::new(), Hub::default());
+
+    let out = go(&tools, &hub, &r, &merging()).unwrap();
+
+    assert!(matches!(&out[0].1, Outcome::Held { reason, .. } if reason.contains("never merged")));
+    assert!(hub.merged.borrow().is_empty());
+}
+
+#[test]
+fn a_dry_run_that_asks_to_merge_still_touches_nothing() {
+    let r = root();
+    repo(&r, "alpha", OLD);
+    let (tools, hub) = (Tools::new(), Hub::default());
+    let opts = Options {
+        dry_run: true,
+        ..merging()
+    };
+
+    let out = go(&tools, &hub, &r, &opts).unwrap();
+
+    assert_eq!(outcomes(&out), vec![("alpha", &Outcome::Planned)]);
+    assert!(tools.ran().is_empty());
+}
+
+#[test]
+fn a_consumer_that_pins_a_merged_consumer_gets_both_pins_in_one_pull_request() {
+    let r = root();
+    two_levels(&r, OLD);
+    let (tools, hub) = (Tools::new(), Hub::default());
+
+    let out = go(&tools, &hub, &r, &merging()).unwrap();
+
+    let names: Vec<&str> = out.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, ["mid", "top"]);
+    assert!(out.iter().all(|(_, o)| matches!(o, Outcome::Merged { .. })));
+    let top = wt_manifest(&r, "top", BRANCH);
+    assert!(top.contains(&format!(
+        "actit = {{ git = \"https://github.com/o/actit\", rev = \"{NEW}\" }}"
+    )));
+    assert!(top.contains(&format!(
+        "mid = {{ git = \"https://github.com/o/mid\", rev = \"{HEAD}\" }}"
+    )));
+    let ran = tools.ran();
+    assert!(
+        ran.contains(&"cargo update -p actit -p mid".to_string()),
+        "{ran:?}"
+    );
+    assert!(ran.contains(&"git commit -m chore: pin actit at 2222222, mid at 3333333".to_string()));
+    assert_eq!(*hub.merged.borrow(), [7, 7]);
+}
+
+#[test]
+fn without_merge_a_dependant_waits_for_the_consumer_it_pins() {
+    let r = root();
+    two_levels(&r, OLD);
+    let (tools, hub) = (Tools::new(), Hub::default());
+
+    let out = go(&tools, &hub, &r, &options()).unwrap();
+
+    assert_eq!(out[0].0, "mid");
+    assert!(matches!(&out[0].1, Outcome::Opened { .. }));
+    assert_eq!(
+        (out[1].0.as_str(), &out[1].1),
+        ("top", &Outcome::Blocked { on: "mid".into() })
+    );
+    let adds = tools
+        .ran()
+        .iter()
+        .filter(|l| l.starts_with("git worktree add"))
+        .count();
+    assert_eq!(adds, 1);
+}
+
+#[test]
+fn a_held_consumer_blocks_its_dependant() {
+    let r = root();
+    two_levels(&r, OLD);
+    let (tools, hub) = (Tools::new(), Hub::default());
+    let opts = Options {
+        gate: None,
+        ..merging()
+    };
+
+    let out = go(&tools, &hub, &r, &opts).unwrap();
+
+    assert!(matches!(&out[0].1, Outcome::Held { .. }));
+    assert_eq!(&out[1].1, &Outcome::Blocked { on: "mid".into() });
+}
+
+#[test]
+fn a_dependant_of_an_up_to_date_consumer_pins_that_consumers_base_head() {
+    let r = root();
+    two_levels(&r, NEW);
+    let (tools, hub) = (Tools::new(), Hub::default());
+
+    let out = go(&tools, &hub, &r, &merging()).unwrap();
+
+    assert_eq!(out[0], ("mid".to_string(), Outcome::UpToDate));
+    assert!(matches!(&out[1].1, Outcome::Merged { .. }));
+    let ran = tools.ran();
+    assert_eq!(ran[0], "git fetch origin");
+    assert_eq!(ran[1], "git rev-parse origin/main");
+    assert!(wt_manifest(&r, "top", BRANCH).contains(&format!("rev = \"{HEAD}\"")));
+}
+
+#[test]
+fn a_failure_reading_a_merged_consumers_head_stops_the_walk() {
+    let r = root();
+    two_levels(&r, OLD);
+    let tools = Tools {
+        fail_on: Some("git rev-parse origin/main"),
+        ..Tools::new()
+    };
+    let hub = Hub::default();
+
+    let out = go(&tools, &hub, &r, &merging()).unwrap();
+
+    assert_eq!(out.len(), 1);
+    assert!(matches!(&out[0].1, Outcome::Failed { step, .. } if step == "head"));
+}
+
+#[test]
+fn the_head_of_a_merged_consumer_is_read_only_when_a_dependant_pins_it() {
+    let r = root();
+    repo(&r, "alpha", OLD);
+    repo(&r, "beta", OLD);
+    let (tools, hub) = (Tools::new(), Hub::default());
+
+    let out = go(&tools, &hub, &r, &merging()).unwrap();
+
+    assert!(out.iter().all(|(_, o)| matches!(o, Outcome::Merged { .. })));
+    assert!(!tools
+        .ran()
+        .contains(&"git rev-parse origin/main".to_string()));
 }
