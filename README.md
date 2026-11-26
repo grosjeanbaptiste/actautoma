@@ -69,6 +69,14 @@ actautoma rename-file OLD NEW [--root DIR]... [--replace FROM TO]... [--dry-run]
 
 Moves one tracked file with `git mv` (run in its folder; the target must not exist and its folder must), then rewrites, under each `--root`, the old file name and the old full path by whole name, and every `--replace FROM TO` pair (for example `ADR-042` to `ADR-043` when an ADR is renumbered). A failing `git mv` stops before any rewrite. `--dry-run` prints the rewrites and changes nothing.
 
+### Committing paths
+
+```text
+actautoma commit --path PATH... -m MESSAGE [--trailer TEXT] [--dir DIR]
+```
+
+Commits exactly the listed paths and nothing else: a file a peer session staged stays staged and out of the commit. A path set with no change is refused (`nothing to commit in a.txt`) and no commit is made. `--trailer TEXT` ends the message after a blank line (the session's `Co-Authored-By`). There is no `--no-verify` and no `--amend`: the repository's hooks run. It prints `committed SHA`.
+
 ### Catching a branch up
 
 ```text

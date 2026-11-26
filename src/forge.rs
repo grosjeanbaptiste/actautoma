@@ -182,6 +182,19 @@ pub trait Forge {
     fn create_release(&self, _release: &NewRelease) -> Result<(), Error> {
         Err(Error::Unsupported("create_release".into()))
     }
+    /// Whether release `tag` exists on repository `slug`; a platform error is not `false`.
+    fn release_exists(&self, _slug: &str, _tag: &str) -> Result<bool, Error> {
+        Err(Error::Unsupported("release_exists".into()))
+    }
+    /// Adds `file` to the existing release `tag` of `slug`, replacing a file of the same name.
+    fn upload_release_asset(
+        &self,
+        _slug: &str,
+        _tag: &str,
+        _file: &std::path::Path,
+    ) -> Result<(), Error> {
+        Err(Error::Unsupported("upload_release_asset".into()))
+    }
     /// Repositories, under any owner, whose name matches `text` (first page, best first).
     fn search_repos(&self, _text: &str) -> Result<RepoSearch, Error> {
         Err(Error::Unsupported("search_repos".into()))

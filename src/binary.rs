@@ -234,6 +234,16 @@ mod tests {
     }
 
     #[test]
+    fn a_case_only_rename_on_a_case_insensitive_disk_is_not_a_clash() {
+        // On macOS `Old` and `old` are one file: `new` "exists" because it is `old`.
+        let b = scratch("case");
+        fs::write(b.join("bin/Old"), "a").unwrap();
+        fs::hard_link(b.join("bin/Old"), b.join("bin/old")).unwrap(); // same inode, as on APFS
+        check(&b.join("proj"), &b.join("bin"), "Old", "old").unwrap();
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
     fn an_unreadable_manifest_is_an_error_not_a_skip() {
         let b = scratch("bad");
         fs::create_dir(b.join("proj/Cargo.toml")).unwrap(); // a folder where a file belongs

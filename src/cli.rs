@@ -209,6 +209,9 @@ pub fn dispatch(
     if args.first().map(String::as_str) == Some("pin-propagate") {
         return crate::pin_propagate::run(args, cwd, env, runner, out);
     }
+    if args.first().map(String::as_str) == Some("commit") {
+        return crate::commit::run(args, cwd, runner, out);
+    }
     if args.first().map(String::as_str) == Some("catch-up") {
         return crate::catch_up::run(args, cwd, runner, out);
     }

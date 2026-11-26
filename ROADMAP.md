@@ -23,7 +23,7 @@ Used by hand instead:
 
 | Raw command | Wanted verb | Owner |
 |---|---|---|
-| `git add PATH… && git commit -m …` (by pathspec, never a peer's file) | `actrepo commit --path P… -m …` (refuses a path that is not listed, keeps the session's attribution trailer, runs the pre-commit gate, never `--no-verify`) | actrepo |
+| `git add PATH… && git commit -m …` (by pathspec, never a peer's file) | `actautoma commit --path P… -m …` (refuses a path that is not listed, keeps the session's attribution trailer, runs the pre-commit gate, never `--no-verify`) | actautoma (done, feat/commit-verb) |
 | `git pull`, `git fetch && git merge --ff-only` | `actrepo pull` (fast-forward only; refuses when incoming files overlap a dirty file, naming it; never switches the branch of a checkout) | actrepo |
 | `git push -u origin B` of one named branch from a worktree, the gate output kept, the result checked afterwards | `actrepo push --branch B` (today `actrepo push` takes a repository and its nested ones, clean tree only); the result is read back with `branch remote`, not from an exit code | actrepo |
 | `git worktree add .worktrees/X -b BRANCH origin/main` | `actrepo worktree add BRANCH [--from origin/main]` | actrepo |
