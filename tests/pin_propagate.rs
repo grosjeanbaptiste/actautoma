@@ -62,6 +62,9 @@ struct Tools {
     ran: RefCell<Vec<String>>,
     origin: Option<String>,
     fail_on: Option<&'static str>,
+    /// The branch every consumer checkout is on, and whether it has tracked changes.
+    checkout: &'static str,
+    dirty: bool,
 }
 
 impl Tools {
@@ -70,6 +73,8 @@ impl Tools {
             ran: RefCell::default(),
             origin: None,
             fail_on: None,
+            checkout: "main",
+            dirty: false,
         }
     }
     fn ran(&self) -> Vec<String> {
@@ -96,6 +101,10 @@ impl Runner for Tools {
                 Ok(String::new())
             }
             ["rev-parse", "origin/main"] => Ok(format!("{HEAD}\n")),
+            ["symbolic-ref", "--short", "HEAD"] => Ok(format!("{}\n", self.checkout)),
+            ["status", "--porcelain", "--untracked-files=no"] if self.dirty => {
+                Ok(" M Cargo.toml\n".into())
+            }
             ["rev-parse", "--abbrev-ref", "HEAD"] => Ok(format!("{BRANCH}\n")),
             ["log", "-1", "--format=%s"] => Ok("chore: pin actit\n".into()),
             ["log", "-1", "--format=%b"] => Ok("Body.\n".into()),
@@ -641,4 +650,100 @@ fn a_failed_cleanup_after_a_merge_is_reported_with_the_merged_pull_request() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+fn stale_why(out: &[(String, Outcome)]) -> String {
+    match &out[0].1 {
+        Outcome::MergedStale { url, why } => {
+            assert_eq!(url, "https://example.test/o/r/pull/7");
+            why.clone()
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_clean_checkout_on_main_is_fast_forwarded_after_the_merge() {
+    let r = root();
+    repo(&r, "alpha", OLD);
+    let (tools, hub) = (Tools::new(), Hub::default());
+
+    let out = go(&tools, &hub, &r, &merging()).unwrap();
+
+    assert!(matches!(&out[0].1, Outcome::Merged { .. }), "{out:?}");
+    let ran = tools.ran();
+    let at = |what: &str| ran.iter().position(|l| l == what).unwrap();
+    assert!(
+        at(&format!("git branch -D {BRANCH}")) < at("git merge --ff-only origin/main"),
+        "the checkout moves after the bump's branch is gone: {ran:?}"
+    );
+    assert!(
+        at("git fetch -q origin") < at("git merge --ff-only origin/main"),
+        "{ran:?}"
+    );
+}
+
+#[test]
+fn a_checkout_on_another_branch_is_left_alone_and_reported() {
+    let r = root();
+    repo(&r, "alpha", OLD);
+    let tools = Tools {
+        checkout: "feat/other",
+        ..Tools::new()
+    };
+
+    let out = go(&tools, &Hub::default(), &r, &merging()).unwrap();
+
+    let why = stale_why(&out);
+    assert!(why.contains("feat/other") && why.contains("main"), "{why}");
+    assert!(!tools
+        .ran()
+        .iter()
+        .any(|l| l.starts_with("git merge --ff-only")));
+}
+
+#[test]
+fn a_checkout_with_tracked_changes_is_left_alone_and_reported() {
+    let r = root();
+    repo(&r, "alpha", OLD);
+    let tools = Tools {
+        dirty: true,
+        ..Tools::new()
+    };
+
+    let out = go(&tools, &Hub::default(), &r, &merging()).unwrap();
+
+    assert!(stale_why(&out).contains("uncommitted"));
+    assert!(!tools
+        .ran()
+        .iter()
+        .any(|l| l.starts_with("git merge --ff-only")));
+}
+
+#[test]
+fn a_refused_fast_forward_is_reported_not_swallowed_and_does_not_fail_the_merge() {
+    let r = root();
+    repo(&r, "alpha", OLD);
+    let tools = Tools {
+        fail_on: Some("git merge --ff-only"),
+        ..Tools::new()
+    };
+
+    let out = go(&tools, &Hub::default(), &r, &merging()).unwrap();
+
+    assert!(stale_why(&out).contains("RED"));
+}
+
+#[test]
+fn an_open_bump_does_not_touch_the_checkout() {
+    let r = root();
+    repo(&r, "alpha", OLD);
+    let tools = Tools::new();
+
+    go(&tools, &Hub::default(), &r, &options()).unwrap();
+
+    assert!(!tools
+        .ran()
+        .iter()
+        .any(|l| l.starts_with("git merge --ff-only")));
 }

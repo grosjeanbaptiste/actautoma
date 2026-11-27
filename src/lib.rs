@@ -14,6 +14,7 @@ pub mod glab;
 mod glab_backup;
 pub mod install_records;
 pub mod move_dir;
+mod pin_advance;
 mod pin_bump;
 pub mod pin_manifest;
 pub mod pin_plan;

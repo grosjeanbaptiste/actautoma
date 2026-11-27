@@ -2,6 +2,7 @@
 //! commit, and ship the branch, merging when asked and safe (ADR 0002, slices 3-4).
 
 use crate::forge::{Error, Forge, Runner};
+use crate::pin_advance::advance_checkout;
 use crate::pin_manifest::with_rev;
 use crate::pin_plan::Consumer;
 use crate::pin_propagate::{Options, Outcome};
@@ -131,7 +132,10 @@ fn try_bump<F: Forge>(
             // The pull request is merged: its worktree and local branch have done their job.
             discard(runner, consumer, &wt, &branch)
                 .map_err(|(step, output)| (step, format!("merged {url}, then: {output}")))?;
-            Outcome::Merged { url }
+            match advance_checkout(runner, &consumer.dir) {
+                Ok(()) => Outcome::Merged { url },
+                Err(why) => Outcome::MergedStale { url, why },
+            }
         }
         Shipped::Held { url, .. } if !options.merge => Outcome::Opened { url },
         Shipped::Held { url, reason, .. } => Outcome::Held { url, reason },

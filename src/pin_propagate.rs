@@ -38,6 +38,8 @@ pub enum Outcome {
     Opened { url: String },
     /// Its pull request was merged.
     Merged { url: String },
+    /// Merged, but the consumer's own checkout was not advanced, for `why`.
+    MergedStale { url: String, why: String },
     /// Merging was asked and refused, for `reason`; the pull request is open.
     Held { url: String, reason: String },
     /// It pins consumer `on`, whose bump is not merged yet.
@@ -83,7 +85,10 @@ fn learn_head(
     outcome: &Outcome,
     known: &mut Pins,
 ) -> Result<Option<Outcome>, Error> {
-    if !matches!(outcome, Outcome::Merged { .. } | Outcome::UpToDate) {
+    if !matches!(
+        outcome,
+        Outcome::Merged { .. } | Outcome::MergedStale { .. } | Outcome::UpToDate
+    ) {
         return Ok(None);
     }
     let mut wanted = false;
