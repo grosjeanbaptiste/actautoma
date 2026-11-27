@@ -141,6 +141,8 @@ pub fn execute(plan: &Plan, forge: &impl Forge, runner: &impl Runner) -> Result<
     std::fs::rename(&plan.old_dir, plan.new_dir())
         .map_err(|e| Error::Run(format!("cannot move {}: {e}", plan.old_dir.display())))?;
     repair_worktrees(runner, &worktrees)?;
+    // `git worktree repair` writes nothing when only the case changed; the link files are rewritten.
+    crate::worktree_links::relink(&plan.old_dir, &plan.new_dir())?;
     let family = family::names(&plan.new_dir(), &plan.old)?;
     let mut out = Outcome {
         binary: binary::rename_binary(
@@ -235,6 +237,30 @@ mod tests {
         let text = fs::read_to_string(b.join("cfg/a.txt")).unwrap();
         assert_eq!(text, format!("{}\n me/new", b.join("src/new").display()));
         assert_eq!(out.reports[0].1.changed.len(), 1);
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
+    fn the_link_files_of_nested_worktrees_name_the_new_folder_after_the_move() {
+        let b = scratch("links");
+        let p = plan(&b);
+        let admin = p.old_dir.join(".git/worktrees/w");
+        fs::create_dir_all(&admin).unwrap();
+        let wt_git = p.old_dir.join(".worktrees/w/.git");
+        fs::write(admin.join("gitdir"), format!("{}\n", wt_git.display())).unwrap();
+        let f = Fake::answering(vec![
+            ok("gh 2"),
+            ok(""),
+            ok("git@github.com:me/old.git\n"),
+            ok(""),
+            ok(""), // worktree list
+        ]);
+        execute(&p, &Gh::new(&f), &&f).unwrap();
+        let gitdir = fs::read_to_string(b.join("src/new/.git/worktrees/w/gitdir")).unwrap();
+        assert_eq!(
+            gitdir,
+            format!("{}\n", b.join("src/new/.worktrees/w/.git").display())
+        );
         fs::remove_dir_all(&b).unwrap();
     }
 
