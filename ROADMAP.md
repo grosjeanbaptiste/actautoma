@@ -45,9 +45,9 @@ switched peers' checkouts to `main`; it reports "PR merged, but the local
 update is incomplete" when the worktree holds untracked generated files and
 leaves the worktree behind (nothing says which file blocks it).
 
-### Open, found 2026-11-26: `rename-repo` leaves nested worktrees under the old-case path
+### Done 2026-11-27: `rename-repo` and a case-only rename on macOS
 
-After a case-only rename, `git worktree repair` leaves the nested worktrees registered under the old-case path; `rename-repo` should rewrite them. (The first half of this bug, `binary::check` refusing a case-only rename as "already exists", is fixed: `same_file` compares device and inode; test `a_case_only_rename_on_a_case_insensitive_disk_is_not_a_clash`.)
+Both halves of the 2026-11-26 bug are fixed. `binary::check` no longer refuses the rename as "already exists": `same_file` compares device and inode (test `a_case_only_rename_on_a_case_insensitive_disk_is_not_a_clash`). `git worktree repair` writes nothing when only the case changed (checked with an experiment: not even with an explicit path), so `worktree_links::relink` rewrites `.git/worktrees/<name>/gitdir` and each worktree's `.git` file after the move (tests in `src/worktree_links.rs`, wiring test `the_link_files_of_nested_worktrees_name_the_new_folder_after_the_move`). Not covered: a worktree whose folder is neither nested nor listed by `git worktree list`.
 
 ### Bulk case (owner, 2026-11-23): several pushes and several pulls at once
 
