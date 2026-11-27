@@ -8,6 +8,7 @@
 use std::time::Duration;
 
 use crate::forge::{Error, Forge, Mergeable, NewPullRequest, Runner};
+use crate::ship_ci::wait_for_ci;
 use std::path::Path;
 
 /// Repositories (by name, any owner) `ship` opens pull requests in but never merges.
@@ -25,6 +26,9 @@ pub struct Options {
     pub body: Option<String>,
     /// Pause between reads while the platform still computes mergeability.
     pub settle: Duration,
+    /// Longest total wait for a run of CI that is still going before the merge is decided; zero
+    /// never waits.
+    pub ci_wait: Duration,
 }
 
 /// Reads of the pull request while the platform answers UNKNOWN.
@@ -123,7 +127,7 @@ pub fn ship(
     };
     let url = match forge.create_pr(&NewPullRequest {
         base: repo.default_branch.clone(),
-        head: branch,
+        head: branch.clone(),
         title: subject,
         body,
     }) {
@@ -139,8 +143,24 @@ pub fn ship(
         std::thread::sleep(options.settle);
         pr = forge.view_pr(None)?;
     }
+    let (pr, timed_out) = wait_for_ci(
+        forge,
+        &branch,
+        pr,
+        options.merge,
+        options.settle,
+        options.ci_wait,
+    )?;
     let name = repo.slug.rsplit('/').next().unwrap_or(&repo.slug);
     if let Some(reason) = hold(options, name, &pr.mergeable, &pr.merge_state) {
+        let reason = if timed_out {
+            format!(
+                "CI still running after {}ms; {reason}",
+                options.ci_wait.as_millis()
+            )
+        } else {
+            reason
+        };
         return Ok(Outcome::Held {
             number: pr.number,
             url,
