@@ -212,6 +212,25 @@ impl<R: Runner> Forge for Gh<R> {
         self.gh(&args).map(drop)
     }
 
+    fn release_exists(&self, slug: &str, tag: &str) -> Result<bool, Error> {
+        match self.gh(&["release", "view", tag, "--repo", slug]) {
+            Ok(_) => Ok(true),
+            Err(Error::Run(m)) if m.contains("release not found") => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn upload_release_asset(
+        &self,
+        slug: &str,
+        tag: &str,
+        file: &std::path::Path,
+    ) -> Result<(), Error> {
+        let file = file.display().to_string();
+        self.gh(&["release", "upload", tag, &file, "--repo", slug, "--clobber"])
+            .map(drop)
+    }
+
     fn repo_exists(&self, owner: &str, name: &str) -> Result<bool, Error> {
         match self.gh(&["api", &format!("repos/{owner}/{name}")]) {
             Ok(_) => Ok(true),
@@ -496,6 +515,60 @@ mod tests {
             .create_release(&release(true, None))
             .unwrap_err();
         assert_eq!(err, Error::Run("tag exists".into()));
+    }
+
+    #[test]
+    fn release_exists_asks_gh_to_view_the_tag_and_says_yes_when_it_answers() {
+        let f = Fake::answering(vec![Ok("v1.0.0-beta.3".into())]);
+        assert!(Gh::new(&f)
+            .release_exists("me/tap", "v1.0.0-beta.3")
+            .unwrap());
+        assert_eq!(
+            f.call(0).1,
+            ["release", "view", "v1.0.0-beta.3", "--repo", "me/tap"]
+        );
+    }
+
+    #[test]
+    fn release_exists_says_no_when_gh_reports_no_such_release() {
+        let f = Fake::answering(vec![Err(Error::Run("release not found".into()))]);
+        assert!(!Gh::new(&f).release_exists("me/tap", "v9").unwrap());
+    }
+
+    #[test]
+    fn release_exists_does_not_hide_another_failure_as_no() {
+        let f = Fake::answering(vec![Err(Error::Run("HTTP 401: Bad credentials".into()))]);
+        let err = Gh::new(&f).release_exists("me/tap", "v9").unwrap_err();
+        assert_eq!(err, Error::Run("HTTP 401: Bad credentials".into()));
+    }
+
+    #[test]
+    fn upload_release_asset_replaces_a_file_of_the_same_name() {
+        let f = Fake::answering(vec![Ok(String::new())]);
+        Gh::new(&f)
+            .upload_release_asset("me/tap", "v1.0.0-beta.3", &PathBuf::from("/s/A-1.msix"))
+            .unwrap();
+        assert_eq!(
+            f.call(0).1,
+            [
+                "release",
+                "upload",
+                "v1.0.0-beta.3",
+                "/s/A-1.msix",
+                "--repo",
+                "me/tap",
+                "--clobber"
+            ]
+        );
+    }
+
+    #[test]
+    fn upload_release_asset_surfaces_the_tool_failure() {
+        let f = Fake::answering(vec![Err(Error::Run("no such tag".into()))]);
+        let err = Gh::new(&f)
+            .upload_release_asset("me/tap", "v9", &PathBuf::from("/s/a"))
+            .unwrap_err();
+        assert_eq!(err, Error::Run("no such tag".into()));
     }
 
     #[test]
