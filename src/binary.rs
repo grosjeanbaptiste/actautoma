@@ -131,13 +131,28 @@ pub(crate) fn project_dirs(dir: &Path) -> Result<Vec<PathBuf>, Error> {
 /// and a workspace member pattern it cannot expand.
 pub fn check(dir: &Path, bin_dir: &Path, old: &str, new: &str) -> Result<(), Error> {
     project_dirs(dir)?;
-    if bin_dir.join(old).is_file() && bin_dir.join(new).exists() {
+    let (from, to) = (bin_dir.join(old), bin_dir.join(new));
+    if from.is_file() && to.exists() && !same_file(&from, &to) {
         return Err(Error::Run(format!(
             "{} already exists",
             bin_dir.join(new).display()
         )));
     }
     Ok(())
+}
+
+/// Both names open the same file (one device and inode), as `Old` and `old` do on a
+/// case-insensitive disk. A metadata error is not "same": the caller then reports the clash.
+#[cfg(unix)]
+fn same_file(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    matches!((fs::metadata(a), fs::metadata(b)),
+        (Ok(x), Ok(y)) if x.dev() == y.dev() && x.ino() == y.ino())
+}
+
+#[cfg(not(unix))]
+fn same_file(_: &Path, _: &Path) -> bool {
+    false
 }
 
 /// Renames the binary of the project in `dir` and of its workspace members. Returns the
@@ -234,11 +249,25 @@ mod tests {
     }
 
     #[test]
+    fn a_different_file_already_named_new_is_a_clash() {
+        let b = scratch("clash");
+        fs::write(b.join("bin/Old"), "a").unwrap();
+        fs::write(b.join("bin/other"), "b").unwrap();
+        let err = check(&b.join("proj"), &b.join("bin"), "Old", "other").unwrap_err();
+        assert!(err.to_string().contains("already exists"), "{err}");
+        fs::remove_dir_all(&b).unwrap();
+    }
+
+    #[test]
     fn a_case_only_rename_on_a_case_insensitive_disk_is_not_a_clash() {
         // On macOS `Old` and `old` are one file: `new` "exists" because it is `old`.
         let b = scratch("case");
         fs::write(b.join("bin/Old"), "a").unwrap();
-        fs::hard_link(b.join("bin/Old"), b.join("bin/old")).unwrap(); // same inode, as on APFS
+        // A case-insensitive disk (APFS) already answers `old` with the same file; on a
+        // case-sensitive one the link below stands in for that.
+        if !b.join("bin/old").exists() {
+            fs::hard_link(b.join("bin/Old"), b.join("bin/old")).unwrap();
+        }
         check(&b.join("proj"), &b.join("bin"), "Old", "old").unwrap();
         fs::remove_dir_all(&b).unwrap();
     }
