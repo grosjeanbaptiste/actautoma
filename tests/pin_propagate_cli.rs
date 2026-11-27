@@ -255,3 +255,39 @@ fn each_outcome_has_its_own_report_line() {
         assert_eq!(line(&("x".to_string(), outcome)), expected);
     }
 }
+
+#[test]
+fn a_ci_wait_in_seconds_is_accepted_and_a_bad_one_is_refused() {
+    let root = root();
+    repo(&root, "actrepo", OLD);
+    let r = root.to_str().unwrap();
+    let base = [
+        "pin-propagate",
+        "actit",
+        "--rev",
+        NEW,
+        "--root",
+        r,
+        "--dry-run",
+    ];
+    let with = |secs: &'static str| [&base[..], &["--ci-wait", secs]].concat();
+    for good in ["0", "900"] {
+        let (result, out) = run(&root, &with(good), &tools(vec![]));
+        result.unwrap();
+        assert!(out.contains("actrepo: planned"), "{good}: {out}");
+    }
+    for bad in ["", "-1", "ten", "1.5"] {
+        let (result, _) = run(&root, &with(bad), &tools(vec![]));
+        assert!(
+            matches!(result, Err(Error::Run(m)) if m.contains("usage: actautoma pin-propagate")),
+            "{bad:?}"
+        );
+    }
+    let (result, _) = run(&root, &[&base[..], &["--ci-wait"]].concat(), &tools(vec![]));
+    assert!(matches!(result, Err(Error::Run(m)) if m.contains("usage: actautoma pin-propagate")));
+}
+
+#[test]
+fn the_usage_names_the_ci_wait_option() {
+    assert!(actautoma::pin_propagate::USAGE.contains("[--ci-wait SECONDS]"));
+}

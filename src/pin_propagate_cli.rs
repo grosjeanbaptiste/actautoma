@@ -9,7 +9,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub const USAGE: &str =
-    "usage: actautoma pin-propagate DEP [--rev REV] [--root DIR] [--gate \"PROGRAM ARGS\"] [--dry-run] [--merge]";
+    "usage: actautoma pin-propagate DEP [--rev REV] [--root DIR] [--gate \"PROGRAM ARGS\"] [--dry-run] [--merge] [--ci-wait SECONDS]";
+
+/// Longest wait for CI per consumer when `--merge` is given without `--ci-wait`.
+const DEFAULT_CI_WAIT_SECS: u64 = 900;
 
 fn usage() -> Error {
     Error::Run(USAGE.to_string())
@@ -49,9 +52,11 @@ pub fn run(
         .filter(|a| !a.starts_with("--"))
         .ok_or_else(usage)?;
     let (mut rev, mut root, mut gate, mut dry_run, mut merge) = (None, None, None, false, false);
+    let mut ci_wait: Option<u64> = None;
     while let Some(flag) = it.next() {
         let mut value = || it.next().cloned().ok_or_else(usage);
         match flag.as_str() {
+            "--ci-wait" => ci_wait = Some(value()?.parse().map_err(|_| usage())?),
             "--dry-run" => dry_run = true,
             "--merge" => merge = true,
             "--rev" => rev = Some(value()?),
@@ -85,6 +90,11 @@ pub fn run(
         dry_run,
         merge,
         settle: Duration::from_secs(4),
+        ci_wait: Duration::from_secs(ci_wait.unwrap_or(if merge {
+            DEFAULT_CI_WAIT_SECS
+        } else {
+            0
+        })),
     };
     let forge_for = |wt: &Path| Gh::new(runner).in_dir(wt);
     let results = propagate(runner, &forge_for, &root, dep, &rev, &options)?;

@@ -123,6 +123,7 @@ fn try_bump<F: Forge>(
             list.join(", ")
         )),
         settle: options.settle,
+        ci_wait: options.ci_wait,
     };
     let shipped = at("ship", ship(&forge_for(&wt), runner, &wt, &ship_options))?;
     Ok(match shipped {

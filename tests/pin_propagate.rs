@@ -169,6 +169,7 @@ fn options() -> Options {
         dry_run: false,
         merge: false,
         settle: std::time::Duration::ZERO,
+        ci_wait: std::time::Duration::ZERO,
     }
 }
 

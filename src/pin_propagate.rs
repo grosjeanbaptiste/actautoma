@@ -23,6 +23,8 @@ pub struct Options {
     pub merge: bool,
     /// Pause between reads while the platform still computes mergeability.
     pub settle: Duration,
+    /// Longest total wait for a run of CI that is still going, per consumer; zero never waits.
+    pub ci_wait: Duration,
 }
 
 /// What happened to one consumer.

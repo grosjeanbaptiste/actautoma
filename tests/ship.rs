@@ -120,6 +120,7 @@ fn options() -> Options {
         merge: true,
         body: None,
         settle: std::time::Duration::ZERO,
+        ci_wait: std::time::Duration::ZERO,
     }
 }
 
@@ -309,4 +310,153 @@ fn a_repository_whose_name_only_contains_an_excluded_one_is_merged() {
     let (tools, hub) = (Tools::new(), Hub::new("me/acteble_api_docs"));
     let out = go(&tools, &hub, &options()).unwrap();
     assert!(matches!(out, Outcome::Merged { .. }), "{out:?}");
+}
+
+/// A forge whose CI runs through `states` (one per read, the last repeating) and whose pull
+/// request turns CLEAN once a run ends in `success`.
+struct Ci {
+    hub: Hub,
+    states: RefCell<Vec<&'static str>>,
+    reads: std::cell::Cell<u32>,
+}
+
+impl Ci {
+    fn new(states: &[&'static str], pr_state: &'static str) -> Self {
+        let mut hub = Hub::new("me/actindexer");
+        hub.merge_state = pr_state;
+        Ci {
+            hub,
+            states: RefCell::new(states.iter().rev().copied().collect()),
+            reads: std::cell::Cell::new(0),
+        }
+    }
+    fn clean(&self) -> bool {
+        self.states.borrow().last() == Some(&"success") && self.states.borrow().len() == 1
+    }
+}
+
+impl Forge for Ci {
+    fn view_pr(&self, n: Option<u64>) -> Result<PullRequest, Error> {
+        let mut pr = self.hub.view_pr(n)?;
+        if self.clean() {
+            pr.merge_state = "CLEAN".into();
+        }
+        Ok(pr)
+    }
+    fn create_pr(&self, pr: &NewPullRequest) -> Result<String, Error> {
+        self.hub.create_pr(pr)
+    }
+    fn merge_pr(&self, number: u64) -> Result<(), Error> {
+        self.hub.merge_pr(number)
+    }
+    fn view_repo(&self) -> Result<Repo, Error> {
+        self.hub.view_repo()
+    }
+    fn set_default_branch(&self, s: &str, b: &str) -> Result<(), Error> {
+        self.hub.set_default_branch(s, b)
+    }
+    fn create_repo(&self, r: &NewRepo) -> Result<(), Error> {
+        self.hub.create_repo(r)
+    }
+    fn available(&self) -> Result<(), Error> {
+        Ok(())
+    }
+    fn last_run(&self, branch: &str) -> Result<Option<actautoma::forge::CiRun>, Error> {
+        assert_eq!(branch, "feat/x");
+        self.reads.set(self.reads.get() + 1);
+        let mut states = self.states.borrow_mut();
+        let state = if states.len() > 1 {
+            states.pop().unwrap()
+        } else {
+            states[0]
+        };
+        Ok(Some(actautoma::forge::CiRun {
+            workflow: "ci".into(),
+            state: state.into(),
+            date: "2026-11-27".into(),
+        }))
+    }
+}
+
+fn waiting() -> Options {
+    Options {
+        ci_wait: std::time::Duration::from_millis(200),
+        settle: std::time::Duration::from_millis(1),
+        ..options()
+    }
+}
+
+#[test]
+fn a_run_still_going_is_waited_for_then_the_clean_pull_request_is_merged() {
+    let tools = Tools::new();
+    let ci = Ci::new(&["queued", "in_progress", "success"], "UNSTABLE");
+    let out = ship(&ci, &&tools, Path::new("."), &waiting()).unwrap();
+    assert!(matches!(out, Outcome::Merged { .. }), "{out:?}");
+    assert_eq!(*ci.hub.merged.borrow(), [7]);
+}
+
+#[test]
+fn a_run_that_never_ends_holds_the_merge_and_names_the_wait() {
+    let tools = Tools::new();
+    let ci = Ci::new(&["in_progress"], "UNSTABLE");
+    let out = ship(&ci, &&tools, Path::new("."), &waiting()).unwrap();
+    assert!(
+        matches!(&out, Outcome::Held { reason, .. } if reason.contains("CI") && reason.contains("200")),
+        "{out:?}"
+    );
+    assert!(ci.hub.merged.borrow().is_empty());
+}
+
+#[test]
+fn a_run_that_failed_holds_the_merge_without_waiting() {
+    let tools = Tools::new();
+    let ci = Ci::new(&["failure"], "UNSTABLE");
+    let out = ship(&ci, &&tools, Path::new("."), &waiting()).unwrap();
+    assert!(
+        matches!(&out, Outcome::Held { reason, .. } if reason.contains("UNSTABLE")),
+        "{out:?}"
+    );
+    assert_eq!(ci.reads.get(), 1, "a finished run is read once");
+    assert!(ci.hub.merged.borrow().is_empty());
+}
+
+#[test]
+fn without_a_ci_wait_the_run_is_never_read() {
+    let tools = Tools::new();
+    let ci = Ci::new(&["in_progress"], "UNSTABLE");
+    let opts = Options {
+        ci_wait: std::time::Duration::ZERO,
+        ..waiting()
+    };
+    let out = ship(&ci, &&tools, Path::new("."), &opts).unwrap();
+    assert!(matches!(out, Outcome::Held { .. }), "{out:?}");
+    assert_eq!(ci.reads.get(), 0);
+}
+
+#[test]
+fn a_forge_that_cannot_read_runs_holds_the_merge_as_before() {
+    let (tools, mut hub) = (Tools::new(), Hub::new("me/actindexer"));
+    hub.merge_state = "UNSTABLE";
+    let out = go(&tools, &hub, &waiting()).unwrap();
+    assert!(
+        matches!(&out, Outcome::Held { reason, .. } if reason.contains("UNSTABLE")),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn the_run_is_read_only_when_merging_a_mergeable_unclean_pull_request() {
+    let tools = Tools::new();
+    let cases: [(&str, bool, Mergeable, &str); 3] = [
+        ("merging not asked", false, Mergeable::Mergeable, "UNSTABLE"),
+        ("conflict", true, Mergeable::Conflicting, "UNSTABLE"),
+        ("already CLEAN", true, Mergeable::Mergeable, "CLEAN"),
+    ];
+    for (what, merge, mergeable, state) in cases {
+        let mut ci = Ci::new(&["in_progress"], state);
+        ci.hub.mergeable = mergeable;
+        let opts = Options { merge, ..waiting() };
+        ship(&ci, &&tools, Path::new("."), &opts).unwrap();
+        assert_eq!(ci.reads.get(), 0, "{what}: the run must not be read");
+    }
 }
