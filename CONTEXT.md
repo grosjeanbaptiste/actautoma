@@ -1,4 +1,4 @@
-# actautoma — state as of 2026-11-23
+# actautoma — state as of 2026-11-27
 
 The verified, current state of this project. Every session reads this file
 first and updates it after any act that changes the state (a send, a merge,
@@ -73,3 +73,4 @@ function of tracked files>
 
 - 2026-11-23 — the owner repeated the directive and named three workflows: push, commit, pull. `ROADMAP.md` now lists `actrepo commit` (pathspec only, trailer kept, pre-commit gate, never `--no-verify`), `actrepo pull` (fast-forward only, never switches a checkout) and `actrepo push --branch` (one named branch from a worktree, result read back). Nothing built. Source: the owner's message and `actrepo --help` (no `commit`, no `pull`).
 - 2026-11-23 — the owner added a bulk case (3 pushes and 3 pulls pending, settled automatically): `ROADMAP.md` now lists `actautoma sync-all` on top of `actrepo sync`. Nothing built. Source: the owner's message.
+- 2026-11-27 (branch `fix/case-only-binary-check`): `binary::check` no longer refuses a case-only rename (`Actit` -> `actit`) on a case-insensitive disk: it refuses only when `new` exists and is a different file than `old` (`same_file`: device and inode). Test `a_case_only_rename_on_a_case_insensitive_disk_is_not_a_clash` seen red, then green; `cargo test --lib binary` 12 passed, clippy `--all-targets --all-features -D warnings` and fmt clean. Still open: rewrite the nested worktrees' paths after the rename (ROADMAP). Source: `src/binary.rs`.
