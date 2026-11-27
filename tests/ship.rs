@@ -443,3 +443,20 @@ fn a_forge_that_cannot_read_runs_holds_the_merge_as_before() {
         "{out:?}"
     );
 }
+
+#[test]
+fn the_run_is_read_only_when_merging_a_mergeable_unclean_pull_request() {
+    let tools = Tools::new();
+    let cases: [(&str, bool, Mergeable, &str); 3] = [
+        ("merging not asked", false, Mergeable::Mergeable, "UNSTABLE"),
+        ("conflict", true, Mergeable::Conflicting, "UNSTABLE"),
+        ("already CLEAN", true, Mergeable::Mergeable, "CLEAN"),
+    ];
+    for (what, merge, mergeable, state) in cases {
+        let mut ci = Ci::new(&["in_progress"], state);
+        ci.hub.mergeable = mergeable;
+        let opts = Options { merge, ..waiting() };
+        ship(&ci, &&tools, Path::new("."), &opts).unwrap();
+        assert_eq!(ci.reads.get(), 0, "{what}: the run must not be read");
+    }
+}
