@@ -127,11 +127,21 @@ pub(crate) fn project_dirs(dir: &Path) -> Result<Vec<PathBuf>, Error> {
     Ok(dirs)
 }
 
+/// True when both paths are one file (same device and inode): on a case-insensitive disk
+/// `Old` and `old` are, so a case-only rename is not a clash.
+fn same_file(a: &Path, b: &Path) -> Result<bool, Error> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = |p: &Path| fs::metadata(p).map_err(|e| io(p, "stat", &e));
+    let (a, b) = (meta(a)?, meta(b)?);
+    Ok(a.dev() == b.dev() && a.ino() == b.ino())
+}
+
 /// Refuses, before any change, a clash with an executable already installed as `new`
 /// and a workspace member pattern it cannot expand.
 pub fn check(dir: &Path, bin_dir: &Path, old: &str, new: &str) -> Result<(), Error> {
     project_dirs(dir)?;
-    if bin_dir.join(old).is_file() && bin_dir.join(new).exists() {
+    let (from, to) = (bin_dir.join(old), bin_dir.join(new));
+    if from.is_file() && to.exists() && !same_file(&from, &to)? {
         return Err(Error::Run(format!(
             "{} already exists",
             bin_dir.join(new).display()
@@ -238,7 +248,13 @@ mod tests {
         // On macOS `Old` and `old` are one file: `new` "exists" because it is `old`.
         let b = scratch("case");
         fs::write(b.join("bin/Old"), "a").unwrap();
-        fs::hard_link(b.join("bin/Old"), b.join("bin/old")).unwrap(); // same inode, as on APFS
+        // Same inode on both disk kinds: a hard link on a case-sensitive disk, a name
+        // collision (AlreadyExists) on a case-insensitive one such as APFS.
+        match fs::hard_link(b.join("bin/Old"), b.join("bin/old")) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => panic!("hard link: {e}"),
+        }
         check(&b.join("proj"), &b.join("bin"), "Old", "old").unwrap();
         fs::remove_dir_all(&b).unwrap();
     }

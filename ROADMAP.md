@@ -45,9 +45,9 @@ switched peers' checkouts to `main`; it reports "PR merged, but the local
 update is incomplete" when the worktree holds untracked generated files and
 leaves the worktree behind (nothing says which file blocks it).
 
-### Bug found 2026-11-26: `rename-repo` refuses a case-only rename on macOS
+### Open, found 2026-11-26: `rename-repo` leaves nested worktrees under the old-case path
 
-`actautoma rename-repo OWNER/Actit actit` stops with "`~/.cargo/bin/actit` already exists": `binary::check` sees `Actit` and `actit` as one file on a case-insensitive volume. It was worked around with `--bin-dir` on an empty folder. Wanted: a test first (old and new differ only by case, same inode), then the check treats that as the same binary and renames the folder in two steps. After the rename, `git worktree repair` leaves the nested worktrees registered under the old-case path; `rename-repo` should rewrite them.
+After a case-only rename, `git worktree repair` leaves the nested worktrees registered under the old-case path; `rename-repo` should rewrite them. (The first half of this bug, `binary::check` refusing a case-only rename as "already exists", is fixed: `same_file` compares device and inode; test `a_case_only_rename_on_a_case_insensitive_disk_is_not_a_clash`.)
 
 ### Bulk case (owner, 2026-11-23): several pushes and several pulls at once
 
