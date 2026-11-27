@@ -28,6 +28,7 @@ pub mod rename;
 pub mod rename_file;
 pub mod ship;
 pub mod ship_ci;
+pub mod worktree_links;
 
 /// Moved to `actpath` (ADR 0001); re-exported so existing `actautoma::realign` users keep working.
 pub use actpath::realign;
