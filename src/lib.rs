@@ -17,6 +17,7 @@ mod pin_bump;
 pub mod pin_manifest;
 pub mod pin_plan;
 pub mod pin_propagate;
+pub mod pin_propagate_cli;
 pub mod process;
 pub mod pulls;
 pub mod realign_fs;
