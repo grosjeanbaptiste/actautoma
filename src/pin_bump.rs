@@ -70,6 +70,21 @@ fn discard(
     Ok(())
 }
 
+/// Whether `Cargo.toml` or `Cargo.lock` has uncommitted changes in the worktree.
+fn has_pending(runner: &impl Runner, wt: &Path) -> Result<bool, Failure> {
+    let args = ["status", "--porcelain", "--", "Cargo.toml", "Cargo.lock"];
+    let out = at("status", runner.run("git", &args, Some(wt)))?;
+    Ok(!out.trim().is_empty())
+}
+
+/// Whether the worktree's branch already holds a commit that `origin/main` lacks.
+fn has_commits(runner: &impl Runner, wt: &Path) -> Result<bool, Failure> {
+    let args = ["rev-list", "--count", "origin/main..HEAD"];
+    let out = at("status", runner.run("git", &args, Some(wt)))?;
+    let n = out.trim();
+    Ok(!(n.is_empty() || n == "0"))
+}
+
 /// `cargo update -p A -p B`, then commit `Cargo.toml` and `Cargo.lock`.
 fn commit(runner: &impl Runner, wt: &Path, pins: &Pins) -> Result<(), Failure> {
     let mut update = vec!["update"];
@@ -102,15 +117,24 @@ fn try_bump<F: Forge>(
     let path = wt.to_string_lossy();
     let git = |args: &[&str]| runner.run("git", args, Some(&consumer.dir));
     at("fetch", git(&["fetch", "origin"]))?;
-    at(
-        "worktree",
-        git(&["worktree", "add", "-b", &branch, &path, "origin/main"]),
-    )?;
-    if !rewrite(&wt, pins)? {
+    // A worktree left by an interrupted bump is resumed, not recreated.
+    let resumed = wt.exists();
+    if !resumed {
+        at(
+            "worktree",
+            git(&["worktree", "add", "-b", &branch, &path, "origin/main"]),
+        )?;
+    }
+    let rewritten = rewrite(&wt, pins)?;
+    let pending = resumed && has_pending(runner, &wt)?;
+    let committed = resumed && has_commits(runner, &wt)?;
+    if !(rewritten || pending || committed) {
         discard(runner, consumer, &wt, &branch)?;
         return Ok(Outcome::UpToDate);
     }
-    commit(runner, &wt, pins)?;
+    if rewritten || pending {
+        commit(runner, &wt, pins)?;
+    }
     let list: Vec<String> = pins
         .iter()
         .map(|(dep, rev)| format!("`{dep}` to {}", short(rev)))

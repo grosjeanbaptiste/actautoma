@@ -62,6 +62,10 @@ struct Tools {
     ran: RefCell<Vec<String>>,
     origin: Option<String>,
     fail_on: Option<&'static str>,
+    /// What `git status --porcelain -- Cargo.toml Cargo.lock` prints in a worktree.
+    pending: &'static str,
+    /// What `git rev-list --count origin/main..HEAD` prints in a worktree.
+    ahead: &'static str,
 }
 
 impl Tools {
@@ -70,6 +74,8 @@ impl Tools {
             ran: RefCell::default(),
             origin: None,
             fail_on: None,
+            pending: "",
+            ahead: "",
         }
     }
     fn ran(&self) -> Vec<String> {
@@ -95,6 +101,8 @@ impl Runner for Tools {
                 fs::write(Path::new(path).join("Cargo.toml"), text).unwrap();
                 Ok(String::new())
             }
+            ["status", "--porcelain", "--", "Cargo.toml", "Cargo.lock"] => Ok(self.pending.into()),
+            ["rev-list", "--count", "origin/main..HEAD"] => Ok(self.ahead.into()),
             ["rev-parse", "origin/main"] => Ok(format!("{HEAD}\n")),
             ["rev-parse", "--abbrev-ref", "HEAD"] => Ok(format!("{BRANCH}\n")),
             ["log", "-1", "--format=%s"] => Ok("chore: pin actit\n".into()),
@@ -641,4 +649,77 @@ fn a_failed_cleanup_after_a_merge_is_reported_with_the_merged_pull_request() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+fn left_over(root: &Path, folder: &str, rev: &str) {
+    let wt = worktree(root, folder);
+    fs::create_dir_all(&wt).unwrap();
+    fs::write(wt.join("Cargo.toml"), manifest(rev)).unwrap();
+}
+
+#[test]
+fn an_interrupted_bump_with_pending_changes_is_resumed_at_the_commit() {
+    let r = root();
+    repo(&r, "alpha", OLD);
+    left_over(&r, "alpha", NEW);
+    let tools = Tools {
+        pending: "M  Cargo.toml\n",
+        ..Tools::new()
+    };
+
+    let out = go(&tools, &Hub::default(), &r, &options()).unwrap();
+
+    assert!(matches!(&out[0].1, Outcome::Opened { .. }), "{out:?}");
+    let ran = tools.ran();
+    assert!(!ran.iter().any(|c| c.contains("worktree add")), "{ran:?}");
+    assert!(ran.contains(&"git commit -m chore: pin actit at 2222222".to_string()));
+}
+
+#[test]
+fn an_interrupted_bump_not_yet_rewritten_is_rewritten_and_shipped() {
+    let r = root();
+    repo(&r, "alpha", OLD);
+    left_over(&r, "alpha", OLD);
+    let tools = Tools::new();
+
+    let out = go(&tools, &Hub::default(), &r, &options()).unwrap();
+
+    assert!(matches!(&out[0].1, Outcome::Opened { .. }), "{out:?}");
+    assert!(!tools.ran().iter().any(|c| c.contains("worktree add")));
+    let text = fs::read_to_string(worktree(&r, "alpha").join("Cargo.toml")).unwrap();
+    assert_eq!(text, manifest(NEW));
+}
+
+#[test]
+fn a_left_over_worktree_with_nothing_pending_and_the_pin_already_there_is_discarded() {
+    let r = root();
+    repo(&r, "alpha", OLD);
+    left_over(&r, "alpha", NEW);
+    let tools = Tools::new();
+
+    let out = go(&tools, &Hub::default(), &r, &options()).unwrap();
+
+    assert_eq!(outcomes(&out), vec![("alpha", &Outcome::UpToDate)]);
+    assert!(tools.ran().iter().any(|c| c.contains("worktree remove")));
+}
+
+#[test]
+fn an_interrupted_bump_already_committed_is_shipped_without_a_second_commit() {
+    let r = root();
+    repo(&r, "alpha", OLD);
+    left_over(&r, "alpha", NEW);
+    let tools = Tools {
+        ahead: "1\n",
+        ..Tools::new()
+    };
+
+    let out = go(&tools, &Hub::default(), &r, &options()).unwrap();
+
+    assert!(matches!(&out[0].1, Outcome::Opened { .. }), "{out:?}");
+    let ran = tools.ran();
+    assert!(!ran.iter().any(|c| c.starts_with("git commit")), "{ran:?}");
+    assert!(
+        !ran.iter().any(|c| c.contains("worktree remove")),
+        "{ran:?}"
+    );
 }
