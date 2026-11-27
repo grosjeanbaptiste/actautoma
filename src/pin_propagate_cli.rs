@@ -26,6 +26,9 @@ pub fn line((name, outcome): &(String, Outcome)) -> String {
         Outcome::Planned => format!("{name}: planned"),
         Outcome::Opened { url } => format!("{name}: opened {url}"),
         Outcome::Merged { url } => format!("{name}: merged {url}"),
+        Outcome::MergedStale { url, why } => {
+            format!("{name}: merged {url}; local checkout not advanced: {why}")
+        }
         Outcome::Held { url, reason } => format!("{name}: held {url}: {reason}"),
         Outcome::Blocked { on } => format!("{name}: blocked on {on}"),
         Outcome::Failed { step, output } => format!("{name}: failed at {step}: {output}"),

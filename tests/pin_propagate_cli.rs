@@ -291,3 +291,19 @@ fn a_ci_wait_in_seconds_is_accepted_and_a_bad_one_is_refused() {
 fn the_usage_names_the_ci_wait_option() {
     assert!(actautoma::pin_propagate::USAGE.contains("[--ci-wait SECONDS]"));
 }
+
+#[test]
+fn a_merged_consumer_with_a_stale_checkout_says_so_in_its_line() {
+    use actautoma::pin_propagate::{line, Outcome};
+    let got = line(&(
+        "x".to_string(),
+        Outcome::MergedStale {
+            url: "https://example.test/pull/7".into(),
+            why: "on feat/a, not main".into(),
+        },
+    ));
+    assert_eq!(
+        got,
+        "x: merged https://example.test/pull/7; local checkout not advanced: on feat/a, not main"
+    );
+}
