@@ -29,6 +29,7 @@ Used by hand instead:
 | `git worktree add .worktrees/X -b BRANCH origin/main` | `actrepo worktree add BRANCH [--from origin/main]` | actrepo |
 | `git fetch`, `git ls-remote --heads origin B` | `actrepo branch remote B` (is it pushed, at which sha) | actrepo |
 | `git branch -d B`, `git worktree remove --force` (generated files only) | `actrepo worktree remove`, `actrepo branch delete --merged` | actrepo |
+| `git worktree remove W && git branch -D B` for a never-pushed branch whose content `main` already holds (found 2026-11-27: `doctrine/session-close`, superseded by PR #73; `actrepo worktree prune` skips it because the branch is not contained in `origin/main`) | `actautoma worktree prune --superseded` (remove a clean worktree and its branch when every change of the branch is already in the base, checked by patch-id or tree diff; print the sha so `git reflog` can recover it; refuse a dirty worktree, naming the file) | actautoma |
 | `gh pr view N --json state,mergeable,baseRefName` | `actrepo pr view N` | actrepo |
 | `gh pr list --state open --json …` | `actrepo pr list` | actrepo |
 | `gh pr edit N --base main` | `actrepo pr retarget N --base main` | actrepo |
