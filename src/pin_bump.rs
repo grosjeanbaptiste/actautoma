@@ -152,7 +152,8 @@ fn try_bump<F: Forge>(
     };
     let shipped = at("ship", ship(&forge_for(&wt), runner, &wt, &ship_options))?;
     Ok(match shipped {
-        Shipped::Merged { url, .. } => {
+        // `ship` itself tried the primary checkout; `advance_checkout` below reports it again.
+        Shipped::Merged { url, .. } | Shipped::MergedStale { url, .. } => {
             // The pull request is merged: its worktree and local branch have done their job.
             discard(runner, consumer, &wt, &branch)
                 .map_err(|(step, output)| (step, format!("merged {url}, then: {output}")))?;

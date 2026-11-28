@@ -191,15 +191,22 @@ fn ship_verb(
     out: &mut dyn Write,
 ) -> Result<(), Error> {
     let options = ship_options(args)?;
-    match crate::ship::ship(forge, runner, cwd, &options)? {
-        crate::ship::Outcome::Merged { number, url } => {
-            say(out, &format!("merged #{number} {url}"))
+    let outcome = crate::ship::ship(forge, runner, cwd, &options)?;
+    say(out, &describe_ship(&outcome))
+}
+
+fn describe_ship(outcome: &crate::ship::Outcome) -> String {
+    use crate::ship::Outcome;
+    match outcome {
+        Outcome::Merged { number, url } => format!("merged #{number} {url}"),
+        Outcome::MergedStale { number, url, why } => {
+            format!("merged #{number} {url}; the primary checkout stayed behind: {why}")
         }
-        crate::ship::Outcome::Held {
+        Outcome::Held {
             number,
             url,
             reason,
-        } => say(out, &format!("held #{number} {url}: {reason}")),
+        } => format!("held #{number} {url}: {reason}"),
     }
 }
 
@@ -332,6 +339,19 @@ mod tests {
             }
         }
         assert!(SHIP_USAGE.contains("[--ci-wait SECONDS]"));
+    }
+
+    #[test]
+    fn a_stale_primary_checkout_is_named_in_the_shipped_line() {
+        let line = describe_ship(&crate::ship::Outcome::MergedStale {
+            number: 7,
+            url: "u".into(),
+            why: "it is on `x`, not main".into(),
+        });
+        assert_eq!(
+            line,
+            "merged #7 u; the primary checkout stayed behind: it is on `x`, not main"
+        );
     }
 
     #[test]

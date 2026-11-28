@@ -12,6 +12,14 @@ struct Tools {
     ran: RefCell<Vec<String>>,
     status: &'static str,
     gate_fails: bool,
+    /// Where `git rev-parse --git-common-dir` points; empty when the answer is unknown.
+    common_dir: &'static str,
+    toplevel: &'static str,
+    /// The branch the primary checkout is on.
+    primary_branch: &'static str,
+    primary_status: &'static str,
+    /// Directory each command ran in, one per `ran` line.
+    dirs: RefCell<Vec<String>>,
 }
 
 impl Tools {
@@ -20,6 +28,19 @@ impl Tools {
             ran: RefCell::default(),
             status: "",
             gate_fails: false,
+            common_dir: "",
+            toplevel: "",
+            primary_branch: "main",
+            primary_status: "",
+            dirs: RefCell::default(),
+        }
+    }
+    /// A linked worktree `/p/wt` of the repository whose primary checkout is `/p/repo`.
+    fn in_linked_worktree() -> Self {
+        Tools {
+            common_dir: "/p/repo/.git\n",
+            toplevel: "/p/wt\n",
+            ..Tools::new()
         }
     }
     fn ran(&self) -> Vec<String> {
@@ -28,10 +49,16 @@ impl Tools {
 }
 
 impl Runner for &Tools {
-    fn run(&self, program: &str, args: &[&str], _dir: Option<&Path>) -> Result<String, Error> {
+    fn run(&self, program: &str, args: &[&str], dir: Option<&Path>) -> Result<String, Error> {
         let line = format!("{program} {}", args.join(" "));
         self.ran.borrow_mut().push(line.clone());
+        let at = dir.map(|d| d.display().to_string()).unwrap_or_default();
+        self.dirs.borrow_mut().push(at.clone());
         match line.as_str() {
+            "git rev-parse --path-format=absolute --git-common-dir" => Ok(self.common_dir.into()),
+            "git rev-parse --show-toplevel" => Ok(self.toplevel.into()),
+            "git symbolic-ref --short HEAD" => Ok(format!("{}\n", self.primary_branch)),
+            "git status --porcelain --untracked-files=no" => Ok(self.primary_status.into()),
             "git rev-parse --abbrev-ref HEAD" => Ok("feat/x\n".into()),
             "git status --porcelain" => Ok(self.status.into()),
             "git log -1 --format=%s" => Ok("feat: add x\n".into()),
@@ -459,4 +486,67 @@ fn the_run_is_read_only_when_merging_a_mergeable_unclean_pull_request() {
         ship(&ci, &&tools, Path::new("."), &opts).unwrap();
         assert_eq!(ci.reads.get(), 0, "{what}: the run must not be read");
     }
+}
+
+/// The directory `git <args>` ran in, or `None` if it never ran.
+fn ran_in(tools: &Tools, line: &str) -> Option<String> {
+    let at = tools.ran().iter().position(|l| l == line)?;
+    Some(tools.dirs.borrow()[at].clone())
+}
+
+#[test]
+fn a_merge_from_a_linked_worktree_fast_forwards_the_primary_checkout() {
+    let (tools, hub) = (Tools::in_linked_worktree(), Hub::new("me/actindexer"));
+    let out = go(&tools, &hub, &options()).unwrap();
+    assert!(matches!(out, Outcome::Merged { number: 7, .. }), "{out:?}");
+    assert_eq!(
+        ran_in(&tools, "git merge --ff-only origin/main").as_deref(),
+        Some("/p/repo")
+    );
+}
+
+#[test]
+fn a_primary_checkout_on_another_branch_is_left_alone_and_named() {
+    let mut tools = Tools::in_linked_worktree();
+    tools.primary_branch = "feat/other";
+    let hub = Hub::new("me/actindexer");
+    let out = go(&tools, &hub, &options()).unwrap();
+    let Outcome::MergedStale { number, why, .. } = out else {
+        panic!("{out:?}")
+    };
+    assert_eq!(number, 7);
+    assert!(why.contains("feat/other"), "{why}");
+    assert_eq!(*hub.merged.borrow(), [7]);
+    assert!(!tools.ran().iter().any(|l| l.starts_with("git merge")));
+}
+
+#[test]
+fn a_dirty_primary_checkout_is_left_alone_and_named() {
+    let mut tools = Tools::in_linked_worktree();
+    tools.primary_status = " M src/lib.rs\n";
+    let hub = Hub::new("me/actindexer");
+    let out = go(&tools, &hub, &options()).unwrap();
+    assert!(
+        matches!(&out, Outcome::MergedStale { why, .. } if why.contains("uncommitted")),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn shipping_from_the_primary_checkout_itself_advances_nothing() {
+    let mut tools = Tools::in_linked_worktree();
+    tools.toplevel = "/p/repo\n";
+    let hub = Hub::new("me/actindexer");
+    let out = go(&tools, &hub, &options()).unwrap();
+    assert!(matches!(out, Outcome::Merged { .. }), "{out:?}");
+    assert!(!tools.ran().iter().any(|l| l.starts_with("git merge")));
+}
+
+#[test]
+fn a_held_pull_request_advances_nothing() {
+    let tools = Tools::in_linked_worktree();
+    let hub = Hub::new("me/acteble_api");
+    let out = go(&tools, &hub, &options()).unwrap();
+    assert!(matches!(out, Outcome::Held { .. }), "{out:?}");
+    assert!(!tools.ran().iter().any(|l| l.starts_with("git merge")));
 }

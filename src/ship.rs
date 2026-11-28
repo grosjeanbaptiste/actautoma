@@ -8,8 +8,9 @@
 use std::time::Duration;
 
 use crate::forge::{Error, Forge, Mergeable, NewPullRequest, Runner};
+use crate::pin_advance::advance_checkout;
 use crate::ship_ci::wait_for_ci;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Repositories (by name, any owner) `ship` opens pull requests in but never merges.
 pub const NEVER_MERGED: [&str; 2] = ["acteble_api", "melos_apps"];
@@ -39,6 +40,13 @@ const SETTLE_READS: u32 = 8;
 pub enum Outcome {
     /// The pull request was merged.
     Merged { number: u64, url: String },
+    /// The pull request was merged, but the repository's primary checkout, which `ship` ran
+    /// away from (a linked worktree), was left behind `origin/main`, for `why`.
+    MergedStale {
+        number: u64,
+        url: String,
+        why: String,
+    },
     /// The pull request is open and was not merged, for `reason`.
     Held {
         number: u64,
@@ -168,8 +176,30 @@ pub fn ship(
         });
     }
     forge.merge_pr(pr.number)?;
-    Ok(Outcome::Merged {
-        number: pr.number,
-        url,
+    let number = pr.number;
+    Ok(match stale_primary(runner, dir) {
+        Some(why) => Outcome::MergedStale { number, url, why },
+        None => Outcome::Merged { number, url },
     })
+}
+
+/// The primary checkout of the repository `dir` belongs to, when `dir` is a linked worktree of
+/// it and not the checkout itself.
+fn primary_checkout(runner: &impl Runner, dir: &Path) -> Option<PathBuf> {
+    let common = git(
+        runner,
+        dir,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .ok()?;
+    let top = git(runner, dir, &["rev-parse", "--show-toplevel"]).ok()?;
+    let primary = Path::new(common.trim()).parent()?.to_path_buf();
+    (!common.trim().is_empty() && primary != Path::new(top.trim())).then_some(primary)
+}
+
+/// Fast-forwards the primary checkout after a merge made from a linked worktree; the reason it
+/// stayed behind, if it did.
+fn stale_primary(runner: &impl Runner, dir: &Path) -> Option<String> {
+    let primary = primary_checkout(runner, dir)?;
+    advance_checkout(runner, &primary).err()
 }
