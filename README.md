@@ -49,7 +49,7 @@ On this machine, `dotfiles project rename OWNER/OLD NEW` supplies the roots.
 ### Shipping a branch
 
 ```text
-actautoma ship [--gate "PROGRAM ARGS"] [--no-merge] [--body TEXT]
+actautoma ship [--gate "PROGRAM ARGS"] [--no-merge] [--body TEXT] [--ci-wait SECONDS]
 ```
 
 Run in a feature branch with a clean tree: runs the gate, pushes the branch, opens its pull request

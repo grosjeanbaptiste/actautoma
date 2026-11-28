@@ -11,8 +11,9 @@ use std::time::Duration;
 pub const USAGE: &str =
     "usage: actautoma pin-propagate DEP [--rev REV] [--root DIR] [--gate \"PROGRAM ARGS\"] [--dry-run] [--merge] [--ci-wait SECONDS]";
 
-/// Longest wait for CI per consumer when `--merge` is given without `--ci-wait`.
-const DEFAULT_CI_WAIT_SECS: u64 = 900;
+/// Longest wait for CI per consumer when `--merge` is given without `--ci-wait`; `ship` waits as
+/// long.
+pub(crate) const DEFAULT_CI_WAIT_SECS: u64 = 900;
 
 fn usage() -> Error {
     Error::Run(USAGE.to_string())

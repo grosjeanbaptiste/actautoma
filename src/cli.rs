@@ -145,22 +145,16 @@ fn rename_family(args: &[String], cwd: &Path, out: &mut dyn Write) -> Result<(),
 /// Run `actautoma <args>` in `cwd`; the report goes to `out`. `forge` renames on the platform,
 /// `runner` runs `git`, `env` reads `HOME` and `CARGO_HOME`.
 const SHIP_USAGE: &str =
-    "usage: actautoma ship [--gate \"PROGRAM ARGS\"] [--no-merge] [--body TEXT]";
+    "usage: actautoma ship [--gate \"PROGRAM ARGS\"] [--no-merge] [--body TEXT] [--ci-wait SECONDS]";
 
-/// `actautoma ship`: see [`crate::ship`].
-fn ship_verb(
-    args: &[String],
-    cwd: &Path,
-    forge: &impl Forge,
-    runner: &impl Runner,
-    out: &mut dyn Write,
-) -> Result<(), Error> {
+/// The options of `actautoma ship ARGS`; `args[0]` is the verb.
+fn ship_options(args: &[String]) -> Result<crate::ship::Options, Error> {
     let mut options = crate::ship::Options {
         gate: None,
         merge: true,
         body: None,
         settle: std::time::Duration::from_secs(4),
-        ci_wait: std::time::Duration::ZERO,
+        ci_wait: std::time::Duration::from_secs(crate::pin_propagate_cli::DEFAULT_CI_WAIT_SECS),
     };
     let mut it = args.iter().skip(1);
     while let Some(flag) = it.next() {
@@ -175,9 +169,28 @@ fn ship_verb(
             }
             "--body" => options.body = Some(it.next().ok_or_else(|| fail(SHIP_USAGE))?.clone()),
             "--no-merge" => options.merge = false,
+            "--ci-wait" => {
+                let seconds = it
+                    .next()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .ok_or_else(|| fail(SHIP_USAGE))?;
+                options.ci_wait = std::time::Duration::from_secs(seconds);
+            }
             other => return Err(fail(&format!("unknown option {other}\n{SHIP_USAGE}"))),
         }
     }
+    Ok(options)
+}
+
+/// `actautoma ship`: see [`crate::ship`].
+fn ship_verb(
+    args: &[String],
+    cwd: &Path,
+    forge: &impl Forge,
+    runner: &impl Runner,
+    out: &mut dyn Write,
+) -> Result<(), Error> {
+    let options = ship_options(args)?;
     match crate::ship::ship(forge, runner, cwd, &options)? {
         crate::ship::Outcome::Merged { number, url } => {
             say(out, &format!("merged #{number} {url}"))
@@ -282,6 +295,58 @@ mod tests {
         refused(&["ship", "--gate"], "usage: actautoma ship");
         refused(&["ship", "--gate", "  "], "usage: actautoma ship");
         refused(&["ship", "--body"], "usage: actautoma ship");
+    }
+
+    fn ship_args(rest: &[&str]) -> Vec<String> {
+        std::iter::once("ship")
+            .chain(rest.iter().copied())
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn ship_waits_for_a_running_ci_for_a_quarter_hour_unless_told_otherwise() {
+        let o = ship_options(&ship_args(&[])).unwrap();
+        assert_eq!(o.ci_wait, std::time::Duration::from_secs(900));
+        assert!(o.merge);
+        assert_eq!(o.settle, std::time::Duration::from_secs(4));
+    }
+
+    #[test]
+    fn ship_ci_wait_is_read_in_seconds_and_zero_never_waits() {
+        let wait = |n: &str| ship_options(&ship_args(&["--ci-wait", n])).unwrap().ci_wait;
+        assert_eq!(wait("30"), std::time::Duration::from_secs(30));
+        assert_eq!(wait("0"), std::time::Duration::ZERO);
+    }
+
+    #[test]
+    fn ship_ci_wait_needs_a_number_of_seconds() {
+        for rest in [
+            &["--ci-wait"][..],
+            &["--ci-wait", "soon"],
+            &["--ci-wait", "-1"],
+        ] {
+            match ship_options(&ship_args(rest)) {
+                Err(Error::Run(m)) => assert!(m.contains("usage: actautoma ship"), "{m}"),
+                other => panic!("{rest:?}: {other:?}"),
+            }
+        }
+        assert!(SHIP_USAGE.contains("[--ci-wait SECONDS]"));
+    }
+
+    #[test]
+    fn ship_options_keep_the_gate_the_body_and_no_merge() {
+        let o = ship_options(&ship_args(&[
+            "--gate",
+            "make ci",
+            "--body",
+            "text",
+            "--no-merge",
+        ]))
+        .unwrap();
+        assert_eq!(o.gate, Some(vec!["make".to_string(), "ci".to_string()]));
+        assert_eq!(o.body.as_deref(), Some("text"));
+        assert!(!o.merge);
     }
 
     #[test]
