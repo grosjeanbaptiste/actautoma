@@ -149,134 +149,44 @@ fn a_clean_replay_is_gated_too() {
     assert_eq!(git(&work, &["rev-parse", "HEAD"]), original);
 }
 
+/// The peer deletes the file the branch edits: no marker, git cannot choose.
 #[test]
-fn a_conflict_that_is_not_additive_is_not_guessed() {
+fn a_file_the_peer_deleted_and_the_branch_edited_keeps_the_branchs_version() {
+    let (work, peer) = pair();
+    commit(&work, "a.txt", "one\nMINE\nthree\n");
+    git(&peer, &["rm", "-q", "a.txt"]);
+    git(&peer, &["commit", "-q", "-m", "delete"]);
+    git(&peer, &["push", "-q", "origin", "main"]);
+    let outcome = catch_up_with(&ProcessRunner, &work, "main", &union(None)).unwrap();
+    assert!(matches!(outcome, CatchUp::Resolved { .. }), "{outcome:?}");
+    let text = std::fs::read_to_string(work.join("a.txt")).unwrap();
+    assert_eq!(text, "one\nMINE\nthree\n");
+    assert_eq!(git(&work, &["status", "--porcelain"]), "");
+}
+
+/// The branch deletes the file the peer edits: the branch's deletion stands.
+#[test]
+fn a_file_the_branch_deleted_and_the_peer_edited_stays_deleted() {
+    let (work, peer) = pair();
+    git(&work, &["rm", "-q", "a.txt"]);
+    git(&work, &["commit", "-q", "-m", "delete"]);
+    peer_ships(&peer, "a.txt", "one\nPEER\nthree\n");
+    let outcome = catch_up_with(&ProcessRunner, &work, "main", &union(None)).unwrap();
+    assert!(matches!(outcome, CatchUp::Resolved { .. }), "{outcome:?}");
+    assert!(!work.join("a.txt").exists());
+    assert_eq!(git(&work, &["status", "--porcelain"]), "");
+}
+
+/// A bad guess never reaches the remote: the gate puts the branch back.
+#[test]
+fn a_guess_on_a_deleted_file_is_still_gated() {
     let (work, peer) = pair();
     commit(&work, "a.txt", "one\nMINE\nthree\n");
     let original = git(&work, &["rev-parse", "HEAD"]);
     git(&peer, &["rm", "-q", "a.txt"]);
     git(&peer, &["commit", "-q", "-m", "delete"]);
     git(&peer, &["push", "-q", "origin", "main"]);
-    let outcome = catch_up_with(&ProcessRunner, &work, "main", &union(None)).unwrap();
-    assert!(matches!(outcome, CatchUp::Conflict { .. }), "{outcome:?}");
+    let outcome = catch_up_with(&ProcessRunner, &work, "main", &union(Some("exit 3"))).unwrap();
+    assert!(matches!(outcome, CatchUp::GateFailed { .. }), "{outcome:?}");
     assert_eq!(git(&work, &["rev-parse", "HEAD"]), original);
-    assert_eq!(git(&work, &["status", "--porcelain"]), "");
-}
-
-/// The whole merge is clean (the second commit undoes the first) yet replaying
-/// the first commit alone conflicts: without `union` nothing is settled.
-#[test]
-fn a_conflict_found_only_during_the_replay_is_not_settled_without_union() {
-    let (work, peer) = pair();
-    commit(&work, "a.txt", "one\nMINE\nthree\n");
-    commit(&work, "a.txt", "one\ntwo\nthree\n");
-    let original = git(&work, &["rev-parse", "HEAD"]);
-    peer_ships(&peer, "a.txt", "one\nPEER\nthree\n");
-    let outcome = catch_up_with(&ProcessRunner, &work, "main", &Options::default());
-    assert!(outcome.is_err(), "{outcome:?}");
-    assert_eq!(git(&work, &["rev-parse", "HEAD"]), original);
-    assert_eq!(git(&work, &["status", "--porcelain"]), "");
-}
-
-use actautoma::branches::keep_both;
-
-/// Git shares the closing line of two blocks added at the same place: each side
-/// alone is balanced by it, both together are not. The first side is closed.
-#[test]
-fn two_blocks_sharing_their_closing_line_are_both_closed() {
-    let text = "fn f() {\n<<<<<<< HEAD\n    if a {\n        x\n=======\n    if b {\n        y\n>>>>>>> origin/main\n    }\n}\n";
-    assert_eq!(
-        keep_both(text).unwrap(),
-        "fn f() {\n    if a {\n        x\n    }\n    if b {\n        y\n    }\n}\n"
-    );
-}
-
-#[test]
-fn plain_additive_lines_are_kept_both_without_a_closer() {
-    let text = "a\n<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> o\nb\n";
-    assert_eq!(keep_both(text).unwrap(), "a\nx\ny\nb\n");
-}
-
-#[test]
-fn a_diff3_base_section_is_dropped() {
-    let text = "<<<<<<< HEAD\nx\n||||||| base\nold\n=======\ny\n>>>>>>> o\n";
-    assert_eq!(keep_both(text).unwrap(), "x\ny\n");
-}
-
-#[test]
-fn a_file_without_a_marker_is_not_a_conflict() {
-    assert_eq!(keep_both("plain\n"), None);
-}
-
-/// A file that conflicts in two of three replayed commits is named once, and
-/// the files come in a fixed order.
-#[test]
-fn a_file_conflicting_in_two_commits_is_named_once_in_order() {
-    let (work, peer) = pair();
-    commit(&work, "a.txt", "one\ntwo\nthree\nfour\nfive\nsix\nseven\n");
-    commit(&work, "b.txt", "b1\nb2\nb3\n");
-    git(&work, &["push", "-q", "origin", "main"]);
-    git(&peer, &["pull", "-q", "origin", "main"]);
-    commit(
-        &work,
-        "a.txt",
-        "one\ntwo\nMINE1\nthree\nfour\nfive\nsix\nseven\n",
-    );
-    commit(&work, "b.txt", "b1\nb2\nMINEB\nb3\n");
-    commit(
-        &work,
-        "a.txt",
-        "one\ntwo\nMINE1\nthree\nfour\nfive\nsix\nSEVEN-M\n",
-    );
-    commit(
-        &peer,
-        "a.txt",
-        "one\ntwo\nPEER\nthree\nfour\nfive\nsix\nSEVEN-P\n",
-    );
-    commit(&peer, "b.txt", "b1\nb2\nPEERB\nb3\n");
-    git(&peer, &["push", "-q", "origin", "main"]);
-    let outcome = catch_up_with(&ProcessRunner, &work, "main", &union(None)).unwrap();
-    match outcome {
-        CatchUp::Resolved { files, commits, .. } => {
-            assert_eq!(commits, 3);
-            assert_eq!(files, vec!["a.txt".to_string(), "b.txt".to_string()]);
-        }
-        other => panic!("{other:?}"),
-    }
-}
-
-#[test]
-fn a_closer_is_added_only_when_both_sides_leave_a_block_open() {
-    // only HEAD opens a block
-    let text = "<<<<<<< HEAD\n    if a {\n        x\n=======\n    y;\n>>>>>>> o\n    }\n";
-    assert_eq!(
-        keep_both(text).unwrap(),
-        "    if a {\n        x\n    y;\n    }\n"
-    );
-    // only the other side opens a block
-    let text = "<<<<<<< HEAD\n    y;\n=======\n    if b {\n        x\n>>>>>>> o\n    }\n";
-    assert_eq!(
-        keep_both(text).unwrap(),
-        "    y;\n    if b {\n        x\n    }\n"
-    );
-    // neither side opens one
-    let text = "<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> o\n}\n";
-    assert_eq!(keep_both(text).unwrap(), "x\ny\n}\n");
-}
-
-#[test]
-fn a_side_that_closes_as_much_as_it_opens_needs_no_closer() {
-    let text = "<<<<<<< HEAD\n    if a {\n        x\n=======\n    }\n    if b {\n        y\n>>>>>>> o\n    }\n";
-    assert_eq!(
-        keep_both(text).unwrap(),
-        "    if a {\n        x\n    }\n    if b {\n        y\n    }\n"
-    );
-}
-
-#[test]
-fn a_hunk_without_its_closing_marker_does_not_panic() {
-    assert_eq!(
-        keep_both("<<<<<<< HEAD\nx\n=======\ny\n").unwrap(),
-        "x\ny\n"
-    );
 }

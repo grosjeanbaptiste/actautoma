@@ -64,14 +64,13 @@ fn git(runner: &dyn Runner, dir: &Path, head: &[&str], paths: &[String]) -> Resu
     runner.run(GIT, &args, Some(dir))
 }
 
-pub fn run(
-    args: &[String],
-    cwd: &Path,
+/// Commits exactly `paths` with `message`; the short sha, or `None` when they hold no change.
+pub fn commit(
     runner: &dyn Runner,
-    out: &mut dyn Write,
-) -> Result<(), Error> {
-    let request = parse(args, cwd)?;
-    let (dir, paths) = (request.dir.as_path(), request.paths.as_slice());
+    dir: &Path,
+    paths: &[String],
+    message: &str,
+) -> Result<Option<String>, Error> {
     let changed = git(
         runner,
         dir,
@@ -79,21 +78,34 @@ pub fn run(
         paths,
     )?;
     if changed.trim().is_empty() {
-        return Err(Error::Run(format!(
-            "nothing to commit in {}",
-            paths.join(", ")
-        )));
+        return Ok(None);
     }
     git(runner, dir, &["add", PATH_SEPARATOR], paths)?;
     git(
         runner,
         dir,
-        &["commit", FLAG_MESSAGE, &request.message, PATH_SEPARATOR],
+        &["commit", FLAG_MESSAGE, message, PATH_SEPARATOR],
         paths,
     )?;
     let sha = git(runner, dir, &["rev-parse", "--short", "HEAD"], &[])?;
-    writeln!(out, "committed {}", sha.trim())
-        .map_err(|e| Error::Run(format!("cannot write the answer: {e}")))
+    Ok(Some(sha.trim().to_string()))
+}
+
+pub fn run(
+    args: &[String],
+    cwd: &Path,
+    runner: &dyn Runner,
+    out: &mut dyn Write,
+) -> Result<(), Error> {
+    let request = parse(args, cwd)?;
+    let paths = request.paths.as_slice();
+    let Some(sha) = commit(runner, &request.dir, paths, &request.message)? else {
+        return Err(Error::Run(format!(
+            "nothing to commit in {}",
+            paths.join(", ")
+        )));
+    };
+    writeln!(out, "committed {sha}").map_err(|e| Error::Run(format!("cannot write the answer: {e}")))
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@ pub mod commit;
 pub mod family;
 pub mod forge;
 pub mod gh;
+pub mod land;
 mod gh_backup;
 pub mod glab;
 mod glab_backup;

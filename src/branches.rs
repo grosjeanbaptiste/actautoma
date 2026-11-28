@@ -206,6 +206,17 @@ pub fn catch_up(runner: &dyn Runner, dir: &Path, base: &str) -> Result<CatchUp, 
     catch_up_with(runner, dir, base, &Options::default())
 }
 
+/// Settles a conflict that left no marker: the branch's own version of `file`, or its removal
+/// when the branch deleted it. During a replay the branch's commit is "theirs".
+fn keep_branch_version(runner: &dyn Runner, dir: &Path, file: &str) -> Result<(), Error> {
+    if git(runner, dir, &["checkout", "--theirs", "--", file]).is_ok() {
+        git(runner, dir, &["add", "--", file])?;
+    } else {
+        git(runner, dir, &["rm", "-q", "--", file])?;
+    }
+    Ok(())
+}
+
 /// `catch_up` with its options: settle additive conflicts, gate the result.
 pub fn catch_up_with(
     runner: &dyn Runner,
@@ -285,13 +296,16 @@ pub fn catch_up_with(
                 let both = std::fs::read_to_string(&path)
                     .ok()
                     .and_then(|text| keep_both(&text));
-                let Some(both) = both else {
-                    let _ = git(runner, dir, &["rebase", "--abort"]);
-                    return Ok(CatchUp::Conflict { files, backup });
-                };
-                std::fs::write(&path, both)
-                    .map_err(|e| Error::Run(format!("cannot write {file}: {e}")))?;
-                git(runner, dir, &["add", file])?;
+                match both {
+                    Some(both) => {
+                        std::fs::write(&path, both)
+                            .map_err(|e| Error::Run(format!("cannot write {file}: {e}")))?;
+                        git(runner, dir, &["add", file])?;
+                    }
+                    // No marker: one side deleted the file. The branch's version stands
+                    // (its edit, or its deletion); the gate judges the guess.
+                    None => keep_branch_version(runner, dir, file)?,
+                }
                 resolved.push(file.clone());
             }
             if git(
